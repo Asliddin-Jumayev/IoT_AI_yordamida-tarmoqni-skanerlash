@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AIoT Red Team — Cyberpunk Attack Simulator</title>
+  <style>
+    :root {
+      --bg: #07060b;
+      --sidebar: #0b0912;
+      --cd: rgba(18, 14, 26, 0.9);
+      --cd-hover: #1c1528;
+      --in: #09070f;
+      --tx: #f8fafc;
+      --mu: #94a3b8;
+      --dim: #64748b;
+      --bd: #261b30;
+      --ac: #ff1e56;
+      --ac-glow: rgba(255, 30, 86, 0.45);
+      --ac-dim: rgba(255, 30, 86, 0.14);
+      --gr: #00f59b;
+      --gr-dim: rgba(0, 245, 155, 0.13);
+      --bl: #3b82f6;
+      --am: #ffb800;
+      --cy: #00f2fe;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    @keyframes pulse-red {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 30, 86, 0.85), 0 0 15px rgba(255, 30, 86, 0.6); }
+      50% { box-shadow: 0 0 0 9px rgba(255, 30, 86, 0), 0 0 25px rgba(255, 30, 86, 0.9); }
+    }
+    @keyframes pulse-green {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0, 245, 155, 0.6); }
+      50% { box-shadow: 0 0 0 6px rgba(0, 245, 155, 0); }
+    }
+    @keyframes red-alert-border {
+      0%, 100% {
+        border-color: rgba(255, 30, 86, 0.95);
+        box-shadow: 0 0 22px rgba(255, 30, 86, 0.35), inset 0 0 15px rgba(255, 30, 86, 0.14);
+      }
+      50% {
+        border-color: rgba(255, 184, 0, 0.55);
+        box-shadow: 0 0 8px rgba(255, 30, 86, 0.15);
+      }
+    }
+    @keyframes scanline {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(1000%); }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      background-image:
+        radial-gradient(circle at 12% 15%, rgba(255, 30, 86, 0.08) 0%, transparent 38%),
+        radial-gradient(circle at 88% 82%, rgba(255, 184, 0, 0.05) 0%, transparent 38%),
+        linear-gradient(rgba(255, 30, 86, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 30, 86, 0.05) 1px, transparent 1px);
+      background-size: 100% 100%, 100% 100%, 28px 28px, 28px 28px;
+      color: var(--tx);
+      font: 13px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* SIDEBAR */
+    aside {
+      width: 235px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--bd);
+      padding: 18px 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 4px 6px 16px;
+      border-bottom: 1px solid var(--bd);
+    }
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #ff1e56, #ff7b00);
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      color: #fff;
+      font-size: 16px;
+      box-shadow: 0 0 18px var(--ac-glow);
+    }
+    .brand-name { font-weight: 800; font-size: 15px; color: #fff; letter-spacing: 0.5px; }
+    .nav { list-style: none; margin-top: 16px; display: flex; flex-direction: column; gap: 5px; }
+    .nav li {
+      padding: 9px 12px;
+      border-radius: 7px;
+      color: var(--mu);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      transition: .18s;
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+    .nav li:hover { background: rgba(255, 255, 255, 0.04); color: #fff; }
+    .nav li.active {
+      background: var(--ac-dim);
+      color: #ff6b8b;
+      border-color: rgba(255, 30, 86, 0.45);
+      box-shadow: 0 0 14px rgba(255, 30, 86, 0.18);
+    }
+    .side-foot {
+      border-top: 1px solid var(--bd);
+      padding-top: 12px;
+      font-size: 11px;
+      color: var(--dim);
+      line-height: 1.6;
+      font-family: var(--mono);
+    }
+
+    /* MAIN */
+    main {
+      flex: 1;
+      padding: 18px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-width: 1650px;
+      overflow-x: hidden;
+    }
+
+    /* HEADER */
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .top-bar h1 {
+      font-size: 20px;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 0 18px rgba(255, 30, 86, 0.35);
+      letter-spacing: 0.3px;
+    }
+    .top-bar p { font-size: 12px; color: var(--mu); margin-top: 2px; }
+    .conn-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    input, select {
+      width: 100%;
+      background: var(--in);
+      color: var(--tx);
+      border: 1px solid var(--bd);
+      border-radius: 7px;
+      padding: 8px 11px;
+      font-size: 12.5px;
+      font-family: var(--mono);
+      outline: none;
+      transition: .18s;
+    }
+    input:focus, select:focus {
+      border-color: var(--ac);
+      box-shadow: 0 0 12px rgba(255, 30, 86, 0.25);
+    }
+    label { display: block; font-size: 11px; color: var(--mu); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+
+    /* STATUS BANNER */
+    .banner {
+      padding: 10px 15px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: var(--mono);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      background: rgba(0, 245, 155, 0.07);
+      border: 1px solid rgba(0, 245, 155, 0.32);
+      color: var(--gr);
+      transition: .25s;
+    }
+    .banner.running {
+      background: rgba(255, 30, 86, 0.16);
+      color: #fda4af;
+      animation: red-alert-border 1.2s infinite;
+    }
+    .live-dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--gr);
+      margin-right: 8px;
+      animation: pulse-green 1.8s infinite;
+    }
+    .live-dot.active-attack {
+      background: var(--ac);
+      animation: pulse-red 0.9s infinite;
+    }
+
+    /* KPI GRID */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+    .cd {
+      background: var(--cd);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--bd);
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+      transition: border-color .2s, box-shadow .2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .cd:hover { border-color: #3b284a; }
+    .cd.attacking-card { animation: red-alert-border 1.4s infinite; }
+    .kpi-title { font-size: 11px; color: var(--mu); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
+    .kpi-val { font-size: 24px; font-weight: 800; color: #fff; font-family: var(--mono); }
+    .kpi-sub { font-size: 11px; color: var(--dim); margin-top: 4px; font-family: var(--mono); }
+
+    /* CHARTS ROW */
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1.85fr 1fr;
+      gap: 12px;
+    }
+    .sec-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 11px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .chart-box { height: 180px; width: 100%; position: relative; }
+    canvas { width: 100%; height: 100%; display: block; }
+
+    .donut-wrap {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      height: 180px;
+    }
+    .donut-canvas-box { width: 140px; height: 140px; position: relative; flex-shrink: 0; }
+    .donut-legend { flex: 1; display: flex; flex-direction: column; gap: 9px; font-size: 12px; }
+    .leg-item { display: flex; justify-content: space-between; align-items: center; }
+    .leg-left { display: flex; align-items: center; gap: 8px; color: var(--mu); font-family: var(--mono); }
+    .dot { width: 9px; height: 9px; border-radius: 2px; }
+
+    /* CONTROLS GRID */
+    .ctrl-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 12px;
+    }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+    .vector-cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 9px;
+      margin-bottom: 12px;
+    }
+    .vcard {
+      background: var(--in);
+      border: 1px solid var(--bd);
+      border-radius: 8px;
+      padding: 11px 12px;
+      cursor: pointer;
+      transition: .18s;
+      position: relative;
+    }
+    .vcard:hover {
+      border-color: #4c2d5e;
+      transform: translateY(-1px);
+    }
+    .vcard.active {
+      border-color: var(--ac);
+      background: linear-gradient(135deg, rgba(255, 30, 86, 0.18), rgba(255, 123, 0, 0.06));
+      box-shadow: 0 0 16px rgba(255, 30, 86, 0.25);
+    }
+    .vcard b { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #fff; margin-bottom: 3px; }
+    .vcard span { font-size: 10.5px; color: var(--mu); font-family: var(--mono); }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+    .b {
+      border: 1px solid var(--ac);
+      background: linear-gradient(135deg, #ff1e56, #d90429);
+      color: #fff;
+      padding: 9px 18px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 12.5px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      transition: .18s;
+      box-shadow: 0 0 16px rgba(255, 30, 86, 0.35);
+    }
+    .b:hover:not(:disabled) {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+      box-shadow: 0 0 22px rgba(255, 30, 86, 0.6);
+    }
+    .b.stop {
+      background: rgba(255, 30, 86, 0.1);
+      color: #ff6b8b;
+      border-color: rgba(255, 30, 86, 0.5);
+      box-shadow: none;
+    }
+    .b.stop:hover:not(:disabled) {
+      background: var(--ac);
+      color: #fff;
+      box-shadow: 0 0 14px rgba(255, 30, 86, 0.45);
+    }
+    .b.blue {
+      background: linear-gradient(135deg, #2563eb, #0ea5e9);
+      border-color: #3b82f6;
+      box-shadow: 0 0 12px rgba(59, 130, 246, 0.35);
+    }
+    .b.ghost {
+      background: var(--in);
+      border-color: var(--bd);
+      color: var(--mu);
+      padding: 5px 11px;
+      font-size: 11px;
+      box-shadow: none;
+    }
+    .b.ghost:hover { color: #fff; border-color: var(--ac); box-shadow: 0 0 8px rgba(255, 30, 86, 0.25); }
+    .b:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .cmd-bar {
+      margin-top: 11px;
+      background: #050409;
+      border: 1px solid #2d1f3d;
+      border-left: 3px solid var(--ac);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--cy);
+      overflow-x: auto;
+      white-space: nowrap;
+      box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.6);
+    }
+
+    /* TABLE & LOGS */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th {
+      text-align: left;
+      color: var(--mu);
+      font-weight: 600;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--bd);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      background: rgba(18, 14, 26, 0.95);
+    }
+    td {
+      padding: 9px 10px;
+      border-bottom: 1px solid rgba(38, 27, 48, 0.65);
+      font-family: var(--mono);
+      vertical-align: middle;
+    }
+    tr:hover td { background: rgba(255, 30, 86, 0.04); }
+    tr.target-selected td {
+      background: rgba(255, 30, 86, 0.11);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+    .pill.ok { background: var(--gr-dim); color: var(--gr); border: 1px solid rgba(0, 245, 155, 0.35); }
+    .pill.bad { background: var(--ac-dim); color: #ff6b8b; border: 1px solid rgba(255, 30, 86, 0.45); }
+    .pill.warn { background: rgba(255, 184, 0, 0.14); color: var(--am); border: 1px solid rgba(255, 184, 0, 0.4); }
+
+    .terminal-wrap {
+      position: relative;
+      background: #050408;
+      border: 1px solid #2b1d38;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .terminal-head {
+      background: #120d1a;
+      padding: 6px 12px;
+      border-bottom: 1px solid #2b1d38;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--mu);
+    }
+    .term-dots { display: flex; gap: 6px; }
+    .term-dots span { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+    #log {
+      height: 235px;
+      overflow-y: auto;
+      font: 11.5px/1.55 var(--mono);
+      padding: 10px 12px;
+    }
+    #log div {
+      padding: 4px 0;
+      border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+      display: flex;
+      gap: 10px;
+    }
+    .log-t { color: #ff6b8b; flex-shrink: 0; }
+    .log-m { color: #e2e8f0; word-break: break-all; }
+
+    @media (max-width: 1100px) {
+      .kpi-row { grid-template-columns: repeat(2, 1fr); }
+      .charts-row, .ctrl-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- YON MENYU (SIDEBAR) -->
+  <aside>
+    <div>
+      <div class="brand">
+        <div class="brand-logo">☣</div>
+        <div>
+          <div class="brand-name">AIoT RED TEAM</div>
+          <div style="font-size:10px;color:var(--ac);font-family:var(--mono);">OFFENSIVE SIMULATOR</div>
+        </div>
+      </div>
+      <ul class="nav" id="sideNav">
+        <li class="active" onclick="navTo('topSec', this)">🎯 Qo'mondonlik Paneli</li>
+        <li onclick="navTo('ctrlSec', this)">⚡ Hujum Vektorlari</li>
+        <li onclick="navTo('nidsSec', this)">📡 Nishon Qurilmalar</li>
+        <li onclick="navTo('logSec', this)">💻 Terminal Jurnali</li>
+      </ul>
+    </div>
+    <div class="side-foot">
+      <div>Tools: <span style="color:var(--ac)">scapy · hping3</span></div>
+      <div>Scope: <span style="color:var(--am)">RFC1918 Local Net</span></div>
+      <div>Target NIDS: <span style="color:var(--cy)">Port 5000</span></div>
+    </div>
+  </aside>
+
+  <!-- ASOSIY OYNA -->
+  <main id="topSec">
+    <!-- YUQORI SARLAVHA VA BACKEND ULANISH -->
+    <div class="top-bar">
+      <div>
+        <h1>Red Team — Hujum Simulyatori va Stress-Test Muhiti</h1>
+        <p>Lokal tarmoqda (192.168.x.x, 10.x.x.x, 172.16-31.x.x) AIoT NIDS & IPS himoyasini real paket oqimlari bilan sinash.</p>
+      </div>
+      <div class="conn-bar">
+        <input id="api" value="http://127.0.0.1:5001" style="width:175px" title="Hujum simulyatori backend manzili">
+        <input id="nids_api" value="http://127.0.0.1:5000" style="width:175px" title="NIDS monitoring backend manzili">
+        <button class="b blue" onclick="checkEngines();fetchNids()">🔗 Ulanish</button>
+      </div>
+    </div>
+
+    <!-- HOLAT BANNERI -->
+    <div class="banner" id="statusBanner">
+      <span><span class="live-dot" id="liveDot"></span><span id="bannerText">Tizim tayyor · Faol hujum yo'q · Lokal tarmoq sinov rejimi</span></span>
+      <span id="engBadge" class="pill warn">vosita: scapy</span>
+    </div>
+
+    <!-- 5 TA KO'RSATKICH KARTOCHKASI (KPI) -->
+    <div class="kpi-row">
+      <div class="cd" id="stateCard">
+        <div class="kpi-title">operatsiya holati</div>
+        <div class="kpi-val" id="s1" style="font-size:18px;color:var(--gr);">Tinch</div>
+        <div class="kpi-sub" id="kpiSubState">kutish rejimida</div>
+      </div>
+      <div class="cd">
+        <div class="kpi-title">yuborilgan paketlar</div>
+        <div class="kpi-val" id="kpiSent" style="color:var(--cy)">0</div>
+        <div class="kpi-sub" id="kpiTotalSent">jami sessiyada: 0</div>
+      </div>
+      <div class="cd" id="ppsCard">
+        <div class="kpi-title">oqim tezligi (paket/s)</div>
+        <div class="kpi-val" id="kpiPps" style="color:var(--ac)">0</div>
+        <div class="kpi-sub" id="kpiTargetPps">maqsad: 150 pkt/s</div>
+      </div>
+      <div class="cd">
+        <div class="kpi-title">nishon IP manzil</div>
+        <div class="kpi-val" id="kpiTarget" style="color:var(--am)">—</div>
+        <div class="kpi-sub" id="kpiKind">tur tanlanmagan</div>
+      </div>
+      <div class="cd">
+        <div class="kpi-title">NIDS AI reaksiyasi</div>
+        <div class="kpi-val" id="kpiNids" style="font-size:19px;color:var(--mu);">—</div>
+        <div class="kpi-sub" id="kpiNidsSub">5000-portdan kuzatuv</div>
+      </div>
+    </div>
+
+    <!-- GRAFIKLAR QATORI -->
+    <div class="charts-row">
+      <div class="cd">
+        <div class="sec-title">
+          <span>📈 Hujum Oqimi Dinamikasi — Haqiqiy Tezlik vs Maqsad (paket/s)</span>
+          <span style="font-size:11px;color:var(--mu);font-family:var(--mono);">
+            <span style="color:var(--ac)">● Haqiqiy oqim</span> &nbsp; <span style="color:var(--gr)">● Sozlangan chegara</span>
+          </span>
+        </div>
+        <div class="chart-box">
+          <canvas id="flowCanvas"></canvas>
+        </div>
+      </div>
+
+      <div class="cd">
+        <div class="sec-title"><span>🎯 Bajarilgan Hujum Vektorlari</span></div>
+        <div class="donut-wrap">
+          <div class="donut-canvas-box">
+            <canvas id="donutCanvas" width="140" height="140"></canvas>
+          </div>
+          <div class="donut-legend">
+            <div class="leg-item">
+              <span class="leg-left"><span class="dot" style="background:#00f2fe"></span>SCAN (PORT)</span>
+              <b id="cnt_scan" style="font-family:var(--mono);color:#fff">0</b>
+            </div>
+            <div class="leg-item">
+              <span class="leg-left"><span class="dot" style="background:#ff1e56"></span>SYN_FLOOD</span>
+              <b id="cnt_syn" style="font-family:var(--mono);color:#fff">0</b>
+            </div>
+            <div class="leg-item">
+              <span class="leg-left"><span class="dot" style="background:#ffb800"></span>UDP_FLOOD</span>
+              <b id="cnt_udp" style="font-family:var(--mono);color:#fff">0</b>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HUJUM BOSHQARUVI VA TERMINAL JURNALI -->
+    <div class="ctrl-grid" id="ctrlSec">
+      <div class="cd" id="ctrlCard">
+        <div class="sec-title">
+          <span>⚡ Hujum Parametrlarini Sozlash (Payload & Rate Control)</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="b ghost" onclick="preset('scan','scapy',15,80,'')">🔍 Port Skaner</button>
+            <button class="b ghost" onclick="preset('syn_flood','scapy',20,300,'')">🔥 SYN DoS (>200)</button>
+            <button class="b ghost" onclick="preset('udp_flood','hping3',15,150,'5000')">🚀 hping3 Flood</button>
+          </div>
+        </div>
+
+        <!-- Vizual hujum turi tanlagich -->
+        <div class="vector-cards">
+          <div class="vcard active" id="vc_scan" onclick="setKind('scan')">
+            <b>🔍 Port Skanerlash</b>
+            <span>TCP SYN · 1–1024 portlar</span>
+          </div>
+          <div class="vcard" id="vc_syn_flood" onclick="setKind('syn_flood')">
+            <b>💥 SYN Flood (DoS)</b>
+            <span>TCP · 80-port SYN oqimi</span>
+          </div>
+          <div class="vcard" id="vc_udp_flood" onclick="setKind('udp_flood')">
+            <b>🌊 UDP Flood (DoS)</b>
+            <span>UDP · 53-port (40 Bayt)</span>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>🎯 Nishon IP (Lokal tarmoqdagi qurilma)</label>
+            <input id="target" placeholder="192.168.0.1" value="192.168.0.1" oninput="updateCmd();renderNidsTable()">
+          </div>
+          <div>
+            <label>⚔️ Hujum Vektori</label>
+            <select id="kind" onchange="syncCards();updateCmd()">
+              <option value="scan">Port skanerlash (Recon)</option>
+              <option value="syn_flood">SYN flood (TCP DoS)</option>
+              <option value="udp_flood">UDP flood (Volumetric DoS)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row-3" style="margin-top:10px">
+          <div>
+            <label>🛠️ Generator Vositasi</label>
+            <select id="engine" onchange="updateCmd()">
+              <option value="scapy">Python Scapy (L3 Raw)</option>
+              <option value="hping3">hping3 (C-Engine Flood)</option>
+            </select>
+          </div>
+          <div>
+            <label>⏱️ Davomiyligi (soniya)</label>
+            <input id="dur" type="number" value="15" max="60" oninput="updateCmd()">
+          </div>
+          <div>
+            <label>⚡ Intensivlik (paket/s)</label>
+            <input id="pps" type="number" value="150" max="2000" oninput="updateCmd()">
+          </div>
+        </div>
+
+        <div id="count-row" style="margin-top:10px">
+          <label>🔢 Aniq paket soni (ixtiyoriy, faqat hping3 uchun — bo'sh qoldirilsa --flood rejimida ishlaydi)</label>
+          <input id="count" type="number" placeholder="masalan: 5000" max="120000" oninput="updateCmd()">
+        </div>
+
+        <p class="kpi-sub" id="eng-note" style="margin-top:7px;color:var(--mu);"></p>
+
+        <div class="cmd-bar" id="cmdPreview">root@parrot:~# scapy L3socket -> 192.168.0.1</div>
+
+        <div class="btn-row">
+          <button class="b" id="btnStart" onclick="start()">🚀 HUJUMNI BOSHLASH</button>
+          <button class="b stop" id="btnStop" onclick="stop()">🛑 TO'XTATISH (ABORT)</button>
+        </div>
+      </div>
+
+      <!-- TERMINAL LOG -->
+      <div class="cd" id="logSec">
+        <div class="sec-title">
+          <span>💻 Jonli Hujum Terminali (Real-Time Execution Log)</span>
+          <span style="font-size:11px;color:var(--ac);font-family:var(--mono);">/api/status</span>
+        </div>
+        <div class="terminal-wrap">
+          <div class="terminal-head">
+            <div class="term-dots">
+              <span style="background:#ff1e56"></span>
+              <span style="background:#ffb800"></span>
+              <span style="background:#00f59b"></span>
+            </div>
+            <span>root@parrot-redteam:~/attacker#</span>
+          </div>
+          <div id="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NIDS QURILMALAR JADVALI -->
+    <div class="cd" id="nidsSec">
+      <div class="sec-title">
+        <span>📡 Tarmoqdagi Aniqlangan Nishonlar (NIDS 5000-portdan jonli sinxronizatsiya)</span>
+        <button class="b ghost" onclick="fetchNids()">🔄 Nishonlarni yangilash</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>qurilma / ip</th>
+              <th>qurilma turi</th>
+              <th>mac / ishlab chiqaruvchi</th>
+              <th>holat</th>
+              <th>ping</th>
+              <th>paket/s</th>
+              <th>nids ai xulosasi</th>
+              <th>ishonch</th>
+              <th>nishon tanlash</th>
+            </tr>
+          </thead>
+          <tbody id="nidsBody">
+            <tr><td colspan="9" style="color:var(--dim);text-align:center;padding:16px;">NIDS (http://127.0.0.1:5000) ma'lumotlari yuklanmoqda...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const $ = i => document.getElementById(i);
+    let API = "", t = null;
+    let prevSent = 0, sessionTotal = 0, wasRunning = false;
+    let cachedNidsDevs = [];
+    const histActual = Array(34).fill(0);
+    const histTarget = Array(34).fill(0);
+    const typeCounts = { scan: 0, syn_flood: 0, udp_flood: 0 };
+
+    function navTo(id, el) {
+      document.querySelectorAll("#sideNav li").forEach(x => x.classList.remove("active"));
+      if (el) el.classList.add("active");
+      document.getElementById(id).scrollIntoView({ behavior: "smooth" });
+    }
+
+    async function api(p, o) {
+      const base = ($("api").value || "http://127.0.0.1:5001").replace(/\/$/, "");
+      const r = await fetch(base + p, o), j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.status);
+      return j;
+    }
+
+    function setKind(k) {
+      $("kind").value = k;
+      syncCards();
+      updateCmd();
+    }
+
+    function syncCards() {
+      const k = $("kind").value;
+      ["scan", "syn_flood", "udp_flood"].forEach(x => {
+        $("vc_" + x).classList.toggle("active", x === k);
+      });
+    }
+
+    function preset(kind, eng, dur, pps, cnt) {
+      $("kind").value = kind;
+      if (!$("engine").querySelector(`option[value="${eng}"]`).disabled) {
+        $("engine").value = eng;
+      }
+      $("dur").value = dur;
+      $("pps").value = pps;
+      $("count").value = cnt;
+      syncCards();
+      $("engine").dispatchEvent(new Event("change"));
+      updateCmd();
+    }
+
+    function selectTargetIp(ip) {
+      $("target").value = ip;
+      updateCmd();
+      renderNidsTable();
+    }
+
+    function updateCmd() {
+      const ip = $("target").value || "192.168.0.1";
+      const k = $("kind").value;
+      const eng = $("engine").value;
+      const dur = $("dur").value || 15;
+      const pps = $("pps").value || 150;
+      const cnt = +($("count").value || 0);
+      $("engBadge").textContent = "vosita: " + eng;
+      $("kpiTargetPps").textContent = eng === "hping3" ? (cnt ? `chegara: ${cnt} paket` : "rejim: --flood") : `maqsad: ${pps} pkt/s`;
+
+      let cmd = "";
+      if (eng === "hping3" && k !== "scan") {
+        const rate = cnt ? `-c ${cnt} -i u1000` : `--flood`;
+        cmd = k === "syn_flood"
+          ? `timeout ${dur} hping3 -S -p 80 -q -d 40 ${rate} ${ip}`
+          : `timeout ${dur} hping3 -2 -p 53 -q -d 40 ${rate} ${ip}`;
+      } else {
+        const desc = k === "scan" ? `TCP(dport=1..1024, flags="S")` : (k === "syn_flood" ? `TCP(dport=80, flags="S")` : `UDP(dport=53)/("X"*40)`);
+        cmd = `scapy.L3socket().send(IP(dst="${ip}")/${desc})  # ${dur}s, ~${pps} paket/s`;
+      }
+      $("cmdPreview").textContent = "root@parrot:~# " + cmd;
+    }
+
+    async function poll() {
+      try {
+        const s = await api("/api/status");
+        const rate = s.running ? Math.max(0, s.sent - prevSent) : 0;
+        if (s.running && s.sent >= prevSent) sessionTotal += (s.sent - prevSent);
+        prevSent = s.running ? s.sent : 0;
+
+        if (s.running && !wasRunning && s.kind) {
+          typeCounts[s.kind] = (typeCounts[s.kind] || 0) + 1;
+          drawDonut();
+        }
+        wasRunning = s.running;
+
+        $("s1").textContent = s.running ? `🔥 ${s.kind.toUpperCase()}` : "Tinch";
+        $("s1").style.color = s.running ? "#ff1e56" : "#00f59b";
+        $("kpiSubState").textContent = s.running ? `${s.target} (${s.engine})` : "kutish rejimida";
+        $("kpiSent").textContent = s.sent.toLocaleString();
+        $("kpiTotalSent").textContent = `jami sessiyada: ${sessionTotal.toLocaleString()}`;
+        $("kpiPps").textContent = rate.toLocaleString();
+        $("kpiTarget").textContent = s.target || $("target").value || "—";
+        $("kpiKind").textContent = s.running ? `faol vektor: ${s.kind}` : "navbatda";
+
+        $("stateCard").classList.toggle("attacking-card", s.running);
+        $("ppsCard").classList.toggle("attacking-card", s.running);
+        $("ctrlCard").classList.toggle("attacking-card", s.running);
+        $("liveDot").classList.toggle("active-attack", s.running);
+
+        const banner = $("statusBanner");
+        banner.classList.toggle("running", s.running);
+        $("bannerText").textContent = s.running
+          ? `⚡ HUJUM FAOL: ${s.kind.toUpperCase()} ➔ ${s.target} · Yuborildi: ${s.sent.toLocaleString()} paket (${rate} pkt/s)`
+          : `Tizim tayyor · Faol hujum yo'q · Lokal tarmoq sinov rejimi`;
+
+        $("log").innerHTML = s.log.map(e =>
+          `<div><span class="log-t">[${e.t}]</span><span class="log-m">${e.msg}</span></div>`
+        ).join("") || `<div style="color:var(--dim)">Hali hech qanday hujum amali bajarilmadi...</div>`;
+
+        histActual.push(rate); histActual.shift();
+        histTarget.push(s.running ? (+$("pps").value || 150) : 0); histTarget.shift();
+        drawChart();
+      } catch (e) {}
+      t = setTimeout(poll, 1000);
+    }
+
+    async function fetchNids() {
+      const nidsUrl = ($("nids_api").value || "http://127.0.0.1:5000").replace(/\/$/, "");
+      try {
+        const r = await fetch(nidsUrl + "/api/tick");
+        const d = await r.json();
+        cachedNidsDevs = d.devices || [];
+        renderNidsTable();
+      } catch (e) {}
+    }
+
+    function renderNidsTable() {
+      const curTarget = $("target").value.trim();
+      const match = cachedNidsDevs.find(x => x.ip === curTarget);
+      if (match) {
+        $("kpiNids").textContent = match.blocked ? "🛑 BLOKLANGAN" : match.status.toUpperCase();
+        $("kpiNids").style.color = (match.status === "Normal" && !match.blocked) ? "#00f59b" : "#ff1e56";
+        $("kpiNidsSub").textContent = match.score ? `AI ishonchi: ${Math.round(match.score * 100)}%` : "normal oqim";
+      }
+
+      $("nidsBody").innerHTML = cachedNidsDevs.map(x => {
+        const isNorm = x.status === "Normal";
+        const isSelected = x.ip === curTarget;
+        return `<tr class="${isSelected ? 'target-selected' : ''}">
+          <td>
+            <b style="color:#fff">${x.name || "Tarmoq qurilmasi"}</b>
+            ${isSelected ? '<span class="pill bad">🎯 NISHON</span>' : ''}<br>
+            <span style="color:var(--cy)">${x.ip}</span>
+          </td>
+          <td>${x.dtype || "—"}</td>
+          <td style="color:var(--mu)">${x.mac || "—"}<br><span style="font-size:10.5px;color:#93c5fd">${x.vendor || ""}</span></td>
+          <td><span class="pill ${x.online ? 'ok' : 'bad'}">${x.online ? '● online' : '○ offline'}</span></td>
+          <td>${x.rtt != null ? x.rtt + ' ms' : '—'}</td>
+          <td style="color:${(x.pkts_s||0)>150 ? '#ff1e56' : 'var(--tx)'}">${x.pkts_s || 0}</td>
+          <td>
+            <span class="pill ${ isNorm ? 'ok' : 'bad' }">${x.status.toUpperCase()}</span>
+            ${x.blocked ? '<span class="pill bad">IPS DROP</span>' : ''}
+          </td>
+          <td>${x.score ? Math.round(x.score * 100) + '%' : '—'}</td>
+          <td>
+            <button class="b ghost" onclick="selectTargetIp('${x.ip}')">🎯 Nishon qilish</button>
+          </td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--dim)">Qurilmalar topilmadi</td></tr>`;
+    }
+
+    function drawChart() {
+      const c = $("flowCanvas"), ctx = c.getContext("2d");
+      c.width = c.clientWidth * devicePixelRatio;
+      c.height = c.clientHeight * devicePixelRatio;
+      ctx.scale(devicePixelRatio, devicePixelRatio);
+      const w = c.clientWidth, h = c.clientHeight;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+      for (let i = 1; i <= 4; i++) {
+        const y = (h / 5) * i;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+
+      const maxVal = Math.max(200, ...histActual, ...histTarget) * 1.15;
+      const plotArea = (arr, strokeCol, fillCol) => {
+        ctx.beginPath();
+        arr.forEach((v, i) => {
+          const x = (i / (arr.length - 1)) * w;
+          const y = h - 10 - (v / maxVal) * (h - 24);
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = strokeCol;
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+
+        ctx.lineTo(w, h - 10);
+        ctx.lineTo(0, h - 10);
+        ctx.closePath();
+        ctx.fillStyle = fillCol;
+        ctx.fill();
+      };
+      plotArea(histTarget, "#00f59b", "rgba(0, 245, 155, 0.07)");
+      plotArea(histActual, "#ff1e56", "rgba(255, 30, 86, 0.2)");
+    }
+
+    function drawDonut() {
+      const c = $("donutCanvas"), ctx = c.getContext("2d");
+      const total = typeCounts.scan + typeCounts.syn_flood + typeCounts.udp_flood;
+      $("cnt_scan").textContent = typeCounts.scan;
+      $("cnt_syn").textContent = typeCounts.syn_flood;
+      $("cnt_udp").textContent = typeCounts.udp_flood;
+
+      ctx.clearRect(0, 0, 140, 140);
+      const cx = 70, cy = 70, r = 52;
+      ctx.lineWidth = 18;
+
+      if (total === 0) {
+        ctx.strokeStyle = "#261b30";
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      } else {
+        let a = -Math.PI / 2;
+        const parts = [
+          [typeCounts.scan, "#00f2fe"],
+          [typeCounts.syn_flood, "#ff1e56"],
+          [typeCounts.udp_flood, "#ffb800"]
+        ];
+        parts.forEach(([v, col]) => {
+          if (!v) return;
+          const da = (v / total) * Math.PI * 2;
+          ctx.strokeStyle = col;
+          ctx.beginPath(); ctx.arc(cx, cy, r, a, a + da); ctx.stroke();
+          a += da;
+        });
+      }
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 17px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(total), cx, cy);
+    }
+
+    async function start() {
+      API = $("api").value.replace(/\/$/, "");
+      try {
+        await api("/api/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target: $("target").value,
+            kind: $("kind").value,
+            engine: $("engine").value,
+            duration: +$("dur").value,
+            pps: +$("pps").value,
+            count: +($("count").value || 0)
+          })
+        });
+      } catch (e) { alert(e.message); }
+    }
+
+    async function checkEngines() {
+      try {
+        const e = await api("/api/engines");
+        const opt = $("engine").querySelector('option[value="hping3"]');
+        if (!e.hping3) {
+          opt.textContent = "hping3 (o'rnatilmagan: sudo apt install hping3)";
+          opt.disabled = true;
+        } else {
+          opt.textContent = "hping3 (C-Engine Flood — tayyor)";
+          opt.disabled = false;
+        }
+      } catch (err) {}
+    }
+
+    $("engine").onchange = () => {
+      $("eng-note").textContent = $("engine").value === "hping3"
+        ? "⚡ hping3 — Parrot OS'dagi standart tarmoq sinov vositasi, C tilida, juda yuqori tezlikda ishlaydi."
+        : "🐍 Python Scapy — paketlar strukturasi va tezligini to'liq nazorat qiluvchi rejim.";
+      updateCmd();
+    };
+
+    async function stop() {
+      try { await api("/api/stop", { method: "POST" }); } catch (e) {}
+    }
+
+    $("engine").dispatchEvent(new Event("change"));
+    drawDonut();
+    poll();
+    checkEngines();
+    fetchNids();
+    setInterval(fetchNids, 2500);
+  </script>
+</body>
+</html>
