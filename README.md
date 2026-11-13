@@ -110,7 +110,7 @@ GitHub'ga yuklashda shaxsiy bot tokeningiz va chat ID ma'lumotlaringiz sizib chi
 
 ## 👨‍💻 Muallif
 * **Ism-sharif:** Jumayev Asliddin Shahobbos o'g'li
-* **Oliygoh:** Farg'ona davlat texnika universiteti (Kiberxavfsizlik yo'nalishi)
+* **Oliygoh:** Farg'ona davlat texnika universiteti (Axborot xavfsizligi yo'nalishi)
 * **GitHub:** [@Asliddin-Jumayev](https://github.com/Asliddin-Jumayev)
 
 > **⚠️ Mas'uliyatni cheklash (Disclaimer):** Ushbu dasturiy majmua faqat ilmiy-tadqiqot, ta'lim va o'zingizga tegishli lokal tarmoq himoyasini sinovdan o'tkazish uchun mo'ljallangan.# IoT_AI_yordamida-tarmoqni-skanerlash
