@@ -106,7 +106,7 @@ Firefox yoki boshqa brauzerda quyidagi fayllarni oching:
 ---
 
 ## 🔐 Xavfsizlik Eslatmasi
-GitHub'ga yuklashda shaxsiy bot tokeningiz va chat ID ma'lumotlaringiz sizib chiqmasligi uchun ularni himoyalangan muhit o'zgaruvchilari orqali boshqaring yoki `.gitignore` fayliga maxfiy sozlamalarni kiritib o'ting.
+GitHub'ga yuklashda shaxsiy bot tokeningiz va chat ID ma'lumotlari sizib chiqmasligi uchun ularni himoyalangan muhit o'zgaruvchilari orqali boshqarildi va ayanan shu malumotlar kiritiladigan qatrolar bo`sh qoldirildi, shu joylarga dastur ishga tushirilayotgan vaqtda hamma o'z tokenini va telegram id sini kiritib qo'yadi kodga.
 
 ## 👨‍💻 Muallif
 * **Ism-sharif:** Jumayev Asliddin Shahobbos o'g'li
