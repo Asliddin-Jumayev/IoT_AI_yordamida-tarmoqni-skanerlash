@@ -11,8 +11,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # ==============================================================================
 # TELEGRAM BOT SOZLAMALARI (Token va Chat ID ni shu yerga yozib qo'ying)
 # ==============================================================================
-DEFAULT_BOT_TOKEN = "9085127019:AAGZjCQPUBi6FYTu9DNjk8Z-_Plk8VKMXCo"
-DEFAULT_CHAT_ID = "6304712391"
+DEFAULT_BOT_TOKEN = ""
+DEFAULT_CHAT_ID = ""
 
 TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or DEFAULT_BOT_TOKEN).strip()
 TELEGRAM_CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or DEFAULT_CHAT_ID).strip()
