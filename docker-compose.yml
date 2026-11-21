@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  nids-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aiot_nids_backend
+    restart: unless-stopped
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    env_file:
+      - .env
+    volumes:
+      - ./backend/aiot_events.db:/app/aiot_events.db
+
+  attacker:
+    build:
+      context: ./attacker
+      dockerfile: Dockerfile
+    container_name: aiot_redteam_attacker
+    restart: unless-stopped
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      - nids-backend

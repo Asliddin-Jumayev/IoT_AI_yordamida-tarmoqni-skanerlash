@@ -1,17 +1,18 @@
 """
-HAQIQIY dataset (TON_IoT Network, UNSW Canberra) bilan Random Forest o'qitish.
+train_real.py - TON_IoT (UNSW Canberra) Network dataset bilan AI modellarini o'qitish:
+1. Random Forest (Multi-class va Live)
+2. Decision Tree & Logistic Regression (Taqqoslash)
+3. Isolation Forest (Zero-Day va Noma'lum anomaliyalarni aniqlash)
 
-Dataset manbai (GitHub): PatrickYanZihui/TON_IOT_Intrusion_Detection -> rawDataSet/Train_Test_Network.csv
-Asl dataset: Moustafa, N. "ToN_IoT datasets" (UNSW Canberra). Akademik foydalanish uchun, manbani keltiring.
-
-Ishga tushirish:  python train_real.py
+Dataset manbai: PatrickYanZihui/TON_IOT_Intrusion_Detection -> rawDataSet/Train_Test_Network.csv
+Ishga tushirish: python train_real.py
 """
 import os, json, time, urllib.request
 import joblib, numpy as np, pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
@@ -22,14 +23,14 @@ from sklearn.metrics import (accuracy_score, precision_recall_fscore_support, co
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data", "Train_Test_Network.csv")
 URL = ("https://raw.githubusercontent.com/PatrickYanZihui/TON_IOT_Intrusion_Detection/"
-       "b95dbc38c7cce95dfb974fb9c516c6f042c3fab4/rawDataSet/Train_Test_Network.csv")   # aniq commit: shox nomi o'zgarsa ham ishlaydi
+       "b95dbc38c7cce95dfb974fb9c516c6f042c3fab4/rawDataSet/Train_Test_Network.csv")
 SEED = 42
 
 
 def load():
     if not os.path.exists(DATA):
         os.makedirs(os.path.dirname(DATA), exist_ok=True)
-        print("[+] Dataset yuklab olinmoqda (~67 MB), biroz kuting...")
+        print("[+] TON_IoT dataset yuklab olinmoqda (~67 MB), kuting...")
         try:
             urllib.request.urlretrieve(URL, DATA)
         except Exception as e:
@@ -50,11 +51,11 @@ def make_features(df):
     out["bytes_received"] = df["dst_bytes"]
     out["packets_sent"] = df["src_pkts"]
     out["packets_received"] = df["dst_pkts"]
-    out["packet_size"] = df["src_ip_bytes"] / df["src_pkts"].clip(lower=1)           # o'rtacha paket hajmi
-    out["packet_rate"] = df["src_pkts"] / df["duration"].clip(lower=1e-3)            # paket/soniya
+    out["packet_size"] = df["src_ip_bytes"] / df["src_pkts"].clip(lower=1)
+    out["packet_rate"] = df["src_pkts"] / df["duration"].clip(lower=1e-3)
     out["missed_bytes"] = df["missed_bytes"]
     out["dst_port"] = df["dst_port"]
-    for c in ["proto", "service", "conn_state"]:                                      # kategorik -> raqam
+    for c in ["proto", "service", "conn_state"]:
         out[c] = df[c].astype("category").cat.codes
     return out
 
@@ -117,12 +118,12 @@ def main():
                    binary={k: float(v) for k, v in binary.items()}, confusion_matrix=cm.tolist(),
                    importance={k: float(v) for k, v in imp.items()})
     json.dump(summary, open(os.path.join(HERE, "real_results.json"), "w"), indent=2)
-    # Kategorik kodlar jadvali: real trafikni modelga AYNAN shu kodlar bilan berish uchun saqlanadi
+
     cats = {c: [str(v) for v in df[c].astype("category").cat.categories] for c in ["proto", "service", "conn_state"]}
     joblib.dump({"model": rf, "features": list(X.columns), "classes": classes, "categories": cats},
                 os.path.join(HERE, "model_real.joblib"), compress=3)
 
-    # --- LIVE model: portga/servisga bog'liq emas (real tarmoqda yolg'on signal kamroq) ---
+    # --- LIVE model: portga/servisga bog'liq emas ---
     live_cols = [c for c in X.columns if c not in ("dst_port", "service")]
     rfl = RandomForestClassifier(n_estimators=100, max_depth=25, min_samples_leaf=2,
                                  class_weight="balanced_subsample", n_jobs=-1, random_state=SEED).fit(Xtr[live_cols], ytr)
@@ -133,7 +134,17 @@ def main():
     json.dump(summary, open(os.path.join(HERE, "real_results.json"), "w"), indent=2)
     joblib.dump({"model": rfl, "features": live_cols, "classes": classes, "categories": cats},
                 os.path.join(HERE, "model_live.joblib"), compress=3)
-    print(f"\n[+] Tayyor ({time.time() - t0:.0f}s). Saqlandi: real_results.json, real_*.png, model_real.joblib, model_live.joblib")
+
+    # --- Unsupervised Zero-Day Anomaly Detector (Isolation Forest) ---
+    print("\n[+] Zero-Day anomaliyalarni aniqlash uchun Isolation Forest o'qitilmoqda...")
+    norm_Xtr = Xtr[ytr == "normal"][live_cols]
+    iso = IsolationForest(n_estimators=100, contamination=0.03, random_state=SEED, n_jobs=-1)
+    iso.fit(norm_Xtr)
+    joblib.dump({"model": iso, "features": live_cols, "categories": cats},
+                os.path.join(HERE, "model_iso.joblib"), compress=3)
+    print("[+] Isolation Forest saqlandi: model_iso.joblib")
+
+    print(f"\n[+] Tayyor ({time.time() - t0:.0f}s). Barcha modellar saqlandi!")
 
 
 if __name__ == "__main__":

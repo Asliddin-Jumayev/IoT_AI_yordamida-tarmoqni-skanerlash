@@ -249,10 +249,12 @@
         <p>Wireshark CLI (Tshark) chuqur paket tahlili, IEEE OUI brend aniqlagich, Random Forest AI va interaktiv Telegram IPS himoyasi.</p>
       </div>
       <div class="conn-bar">
+        <span id="streamBadge" class="pill cy">⚡ SSE Ulanmoqda...</span>
         <span id="tgBadge" class="pill cy">🤖 Telegram IPS: tekshirilmoqda</span>
-        <input id="api" value="http://127.0.0.1:5000" style="width:170px" title="Backend API">
-        <input id="token" placeholder="token (ixtiyoriy)" style="width:125px" title="AIOT_TOKEN">
+        <input id="api" value="http://127.0.0.1:5000" style="width:160px" title="Backend API">
+        <input id="token" placeholder="token (ixtiyoriy)" style="width:110px" title="AIOT_TOKEN">
         <button class="b" onclick="fetchData();fetchModel()">Yangilash</button>
+        <button class="b ghost" onclick="openReport()" title="Tarmoq Xavfsizlik Auditi Hisoboti">📋 Hisobot</button>
       </div>
     </div>
 
@@ -467,34 +469,114 @@
     const attackCounts = {};
     const COLORS = {
       dos: "#ff2a5f", ddos: "#dc2626", scanning: "#ffb800", mitm: "#00f2fe",
-      ransomware: "#a855f7", backdoor: "#ec4899", xss: "#3b82f6", injection: "#10b981", password: "#eab308"
+      ransomware: "#a855f7", backdoor: "#ec4899", xss: "#3b82f6", injection: "#10b981", password: "#eab308",
+      zero_day: "#c084fc"
     };
 
-    function navTo(id, el) {
-      document.querySelectorAll("#navMenu li").forEach(x => x.classList.remove("active"));
-      if (el) el.classList.add("active");
-      document.getElementById(id).scrollIntoView({ behavior: "smooth" });
+    function openReport() {
+      const base = $("api").value.replace(/\/$/, "");
+      window.open(base + "/api/report?format=html", "_blank");
     }
 
-    function setDevMode(m, el) {
-      devMode = m;
-      document.querySelectorAll("#devFilterPills .f-pill").forEach(x => x.classList.remove("active"));
-      if (el) el.classList.add("active");
+    let eventSource = null;
+    let pollIntervalId = null;
+
+    function connectSSE() {
+      const base = $("api").value.replace(/\/$/, "");
+      if (eventSource) {
+        eventSource.close();
+      }
+      try {
+        eventSource = new EventSource(base + "/api/stream");
+        eventSource.addEventListener("tick", (e) => {
+          $("streamBadge").textContent = "🟢 SSE LIVE";
+          $("streamBadge").className = "pill ok";
+          try {
+            const d = JSON.parse(e.data);
+            processSnapshot(d);
+          } catch (err) {}
+        });
+        eventSource.addEventListener("scan", () => fetchData());
+        eventSource.addEventListener("event", () => fetchData());
+        eventSource.onerror = () => {
+          $("streamBadge").textContent = "🟡 POLLING (2s)";
+          $("streamBadge").className = "pill cy";
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          if (!pollIntervalId) {
+            pollIntervalId = setInterval(fetchData, 2000);
+          }
+        };
+      } catch (err) {
+        $("streamBadge").textContent = "🟡 POLLING (2s)";
+        $("streamBadge").className = "pill cy";
+        if (!pollIntervalId) {
+          pollIntervalId = setInterval(fetchData, 2000);
+        }
+      }
+    }
+
+    function processSnapshot(d) {
+      if (!d) return;
+      lastDevices = d.devices || [];
+      lastPackets = d.packets || [];
+
+      const onlineCnt = lastDevices.filter(x => x.online).length;
+      const anomCnt = lastDevices.filter(x => x.status !== "Normal").length;
+      const blkCnt = lastDevices.filter(x => x.blocked).length;
+
+      $("kpiDevs").textContent = lastDevices.length;
+      $("kpiOnlineSub").textContent = `online: ${onlineCnt} ta`;
+      $("kpiPkts").textContent = (d.stats.packets || 0).toLocaleString();
+      $("kpiFlows").textContent = (d.stats.flows || 0).toLocaleString();
+      $("kpiBad").textContent = (d.stats.suspicious || 0).toLocaleString();
+      $("kpiAnom").textContent = anomCnt;
+      $("kpiAnom").style.color = anomCnt > 0 ? "#ff2a5f" : "#00f59b";
+      $("kpiBlockedSub").textContent = `iptables DROP: ${blkCnt}`;
+      $("anomCard").classList.toggle("danger-card", anomCnt > 0);
+
+      const inf = d.info || {};
+      if (!$("cidrInput").value && inf.scan && inf.scan.cidr) {
+        $("cidrInput").value = inf.scan.cidr;
+      }
+      $("scanMeta").textContent = inf.scan && inf.scan.at
+        ? `oxirgi skaner: ${inf.scan.at} (${inf.scan.method || "ARP"})`
+        : "oxirgi skaner: —";
+
+      $("tgBadge").textContent = inf.telegram ? "🤖 Telegram IPS: Ulangan" : "🤖 Telegram IPS: O'chiq";
+      $("tgBadge").className = `pill ${inf.telegram ? "ok" : "cy"}`;
+
+      const banner = $("statusBanner");
+      banner.classList.toggle("alert", anomCnt > 0);
+      $("liveDot").classList.toggle("danger", anomCnt > 0);
+      const zdStr = inf.zero_day_enabled ? " · Zero-Day: faol" : "";
+      $("bannerText").textContent = anomCnt > 0
+        ? `DIQQAT: Tarmoqda ${anomCnt} ta qurilmada anomaliya aniqlandi! IPS orqali bloklashingiz mumkin.`
+        : `Tshark DPI faol · model: ${inf.model || ""}${zdStr} · oyna: ${inf.window}s · chegara: ${inf.threshold} · skaner ≥${inf.scan_ports} port, flood ≥${inf.flood_pps} pkt/s`;
+      $("sniffBadge").textContent = inf.sniffing ? "tshark: faol" : "tshark: o'chiq";
+      $("sniffBadge").className = `pill ${inf.sniffing ? "ok" : "bad"}`;
+
+      let nPps = 0, bPps = 0;
+      lastDevices.forEach(x => {
+        if (x.status === "Normal") nPps += (x.pkts_s || 0);
+        else bPps += (x.pkts_s || 0);
+      });
+      normHist.push(nPps); normHist.shift();
+      badHist.push(bPps); badHist.shift();
+      drawTrafficChart();
+
+      Object.keys(attackCounts).forEach(k => delete attackCounts[k]);
+      (d.events || []).forEach(e => {
+        if (e.level === 1 && e.label && !["normal", "bloklandi", "ochildi"].includes(e.label)) {
+          attackCounts[e.label] = (attackCounts[e.label] || 0) + 1;
+        }
+      });
+      drawDonut();
       renderDevices();
-    }
-
-    function setDpiQuick(val, el) {
-      $("dpiFilter").value = val;
-      document.querySelectorAll("#dpiFilterPills .f-pill").forEach(x => x.classList.remove("active"));
-      if (el) el.classList.add("active");
       renderDpi();
-    }
-
-    function hdrs() {
-      const h = { "Content-Type": "application/json" };
-      const tk = $("token").value.trim();
-      if (tk) h["X-Token"] = tk;
-      return h;
+      renderEvents(d.events || []);
     }
 
     async function fetchData() {
@@ -502,62 +584,7 @@
       try {
         const r = await fetch(base + "/api/tick");
         const d = await r.json();
-        lastDevices = d.devices || [];
-        lastPackets = d.packets || [];
-
-        const onlineCnt = lastDevices.filter(x => x.online).length;
-        const anomCnt = lastDevices.filter(x => x.status !== "Normal").length;
-        const blkCnt = lastDevices.filter(x => x.blocked).length;
-
-        $("kpiDevs").textContent = lastDevices.length;
-        $("kpiOnlineSub").textContent = `online: ${onlineCnt} ta`;
-        $("kpiPkts").textContent = (d.stats.packets || 0).toLocaleString();
-        $("kpiFlows").textContent = (d.stats.flows || 0).toLocaleString();
-        $("kpiBad").textContent = (d.stats.suspicious || 0).toLocaleString();
-        $("kpiAnom").textContent = anomCnt;
-        $("kpiAnom").style.color = anomCnt > 0 ? "#ff2a5f" : "#00f59b";
-        $("kpiBlockedSub").textContent = `iptables DROP: ${blkCnt}`;
-        $("anomCard").classList.toggle("danger-card", anomCnt > 0);
-
-        const inf = d.info || {};
-        if (!$("cidrInput").value && inf.scan && inf.scan.cidr) {
-          $("cidrInput").value = inf.scan.cidr;
-        }
-        $("scanMeta").textContent = inf.scan && inf.scan.at
-          ? `oxirgi skaner: ${inf.scan.at} (${inf.scan.method || "ARP"})`
-          : "oxirgi skaner: —";
-
-        $("tgBadge").textContent = inf.telegram ? "🤖 Telegram IPS: Ulangan" : "🤖 Telegram IPS: O'chiq";
-        $("tgBadge").className = `pill ${inf.telegram ? "ok" : "cy"}`;
-
-        const banner = $("statusBanner");
-        banner.classList.toggle("alert", anomCnt > 0);
-        $("liveDot").classList.toggle("danger", anomCnt > 0);
-        $("bannerText").textContent = anomCnt > 0
-          ? `DIQQAT: Tarmoqda ${anomCnt} ta qurilmada anomaliya aniqlandi! IPS orqali bloklashingiz mumkin.`
-          : `Tshark DPI faol · model: ${inf.model || ""} · oyna: ${inf.window}s · chegara: ${inf.threshold} · skaner ≥${inf.scan_ports} port, flood ≥${inf.flood_pps} pkt/s`;
-        $("sniffBadge").textContent = inf.sniffing ? "tshark: faol" : "tshark: o'chiq";
-        $("sniffBadge").className = `pill ${inf.sniffing ? "ok" : "bad"}`;
-
-        let nPps = 0, bPps = 0;
-        lastDevices.forEach(x => {
-          if (x.status === "Normal") nPps += (x.pkts_s || 0);
-          else bPps += (x.pkts_s || 0);
-        });
-        normHist.push(nPps); normHist.shift();
-        badHist.push(bPps); badHist.shift();
-        drawTrafficChart();
-
-        Object.keys(attackCounts).forEach(k => delete attackCounts[k]);
-        (d.events || []).forEach(e => {
-          if (e.level === 1 && e.label && !["normal", "bloklandi", "ochildi"].includes(e.label)) {
-            attackCounts[e.label] = (attackCounts[e.label] || 0) + 1;
-          }
-        });
-        drawDonut();
-        renderDevices();
-        renderDpi();
-        renderEvents(d.events || []);
+        processSnapshot(d);
       } catch (err) {}
     }
 
@@ -781,7 +808,7 @@
       a.click();
     }
 
-    setInterval(fetchData, 2000);
+    connectSSE();
     fetchData();
     fetchModel();
   </script>

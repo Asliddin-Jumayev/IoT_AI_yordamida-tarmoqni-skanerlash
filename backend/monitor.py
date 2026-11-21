@@ -1,5 +1,5 @@
 """
-monitor.py - Tshark (Wireshark CLI) + IEEE OUI Vendor + Rich Telegram SOC Bot + Random Forest AI
+monitor.py - Tshark (Wireshark CLI) + IEEE OUI Vendor + Rich Telegram SOC Bot + Random Forest AI + Zero-Day Isolation Forest
 Faqat O'ZINGIZNING tarmog'ingizda ishlating.
 """
 import os, re, time, socket, platform, subprocess, threading, ipaddress, collections, sqlite3, urllib.request, urllib.error, json
@@ -9,13 +9,41 @@ import joblib, pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ==============================================================================
-# TELEGRAM BOT SOZLAMALARI (Token va Chat ID ni shu yerga yozib qo'ying)
+# MUHIT O'RGANUVCHILARINI (.env) YUKLASH
 # ==============================================================================
-DEFAULT_BOT_TOKEN = "9085127019:AAGZjCQPUBi6FYTu9DNjk8Z-_Plk8VKMXCo"
-DEFAULT_CHAT_ID = "6304712391"
+def _load_env_file():
+    # 1. python-dotenv orqali sinab ko'rish
+    try:
+        from dotenv import load_dotenv
+        for p in [os.path.join(HERE, "..", ".env"), os.path.join(HERE, ".env")]:
+            if os.path.exists(p):
+                load_dotenv(p)
+                return
+    except ImportError:
+        pass
+    # 2. Agar python-dotenv bo'lmasa, qo'lda o'qish
+    for p in [os.path.join(HERE, "..", ".env"), os.path.join(HERE, ".env")]:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k, v = k.strip(), v.strip().strip("'\"")
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+                return
+            except Exception:
+                pass
 
-TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or DEFAULT_BOT_TOKEN).strip()
-TELEGRAM_CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or DEFAULT_CHAT_ID).strip()
+_load_env_file()
+
+# ==============================================================================
+# TELEGRAM BOT SOZLAMALARI (Xavfsiz: faqat muhit o'zgaruvchilaridan olinadi)
+# ==============================================================================
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # ==============================================================================
 
 WINDOW = float(os.getenv("AIOT_WINDOW", 5))          # Oqimlarni tahlil qilish oralig'i (soniya)
@@ -24,9 +52,12 @@ MIN_FLOWS = int(os.getenv("AIOT_MIN_FLOWS", 4))      # Anomaliya uchun minimal o
 SCAN_PORTS = int(os.getenv("AIOT_SCAN_PORTS", 20))   # Port skanerlash chegarasi
 FLOOD_PPS = float(os.getenv("AIOT_FLOOD_PPS", 200))  # DoS paket tezligi chegarasi
 
+# IoT va Tarmoq protokollari lug'ati (Kengaytirilgan DPI)
 SERVICE = {
-    53: "dns", 80: "http", 443: "ssl", 21: "ftp", 22: "ssh", 67: "dhcp", 68: "dhcp", 445: "smb",
-    1883: "mqtt", 8883: "ssl", 5683: "coap", 554: "rtsp", 5353: "mdns"
+    21: "ftp", 22: "ssh", 23: "telnet", 53: "dns", 67: "dhcp", 68: "dhcp",
+    80: "http", 123: "ntp", 443: "ssl", 445: "smb", 502: "modbus",
+    554: "rtsp", 1883: "mqtt", 1900: "ssdp", 5353: "mdns", 5683: "coap",
+    5684: "coaps", 8080: "http-alt", 8883: "mqtts"
 }
 
 ACTION = {
@@ -38,7 +69,8 @@ ACTION = {
     "injection": "Veb-interfeysni yangilang, tashqi kirishni yoping.",
     "xss": "Veb-interfeysni yangilang, tashqi kirishni yoping.",
     "ransomware": "Qurilmani zudlik bilan ajrating, zaxira nusxadan tiklang.",
-    "mitm": "ARP jadvalini tekshiring, shubhali qurilmani toping."
+    "mitm": "ARP jadvalini tekshiring, shubhali qurilmani toping.",
+    "zero_day": "Noma'lum oqim: qurilma trafigini izolyatsiya qiling va loglarni chuqur tahlil qiling."
 }
 
 ATTACK_META = {
@@ -51,6 +83,7 @@ ATTACK_META = {
     "xss":        ("🟠 YUQORI XAVF (HIGH)",     "🌐 Cross-Site Scripting (XSS)"),
     "password":   ("🟠 YUQORI XAVF (HIGH)",     "🔑 Parol Tanlash (Brute-Force)"),
     "scanning":   ("🟡 O'RTA XAVF (RECON)",     "🔍 Port va Xizmatlarni Skanerlash"),
+    "zero_day":   ("🟣 NOMA'LUM ANOMALIYA",    "🔮 Zero-Day / G'ayritabiiy Oqim"),
 }
 
 DEVICE_TYPE_HINTS = [
@@ -233,6 +266,7 @@ def arp_scan(cidr):
 
 class Monitor:
     def __init__(self):
+        # 1. Asosiy Random Forest modelini yuklash
         path = next((p for p in (os.getenv("AIOT_MODEL"), os.path.join(HERE, "model_live.joblib"),
                                  os.path.join(HERE, "model_real.joblib")) if p and os.path.exists(p)), None)
         if not path:
@@ -242,8 +276,21 @@ class Monitor:
         self.classes = list(self.model.classes_)
         self.ni = self.classes.index("normal")
         self.model_file = os.path.basename(path)
-        self.devices, self.flows, self.events = {}, {}, collections.deque(maxlen=80)
-        self.packet_buffer = collections.deque(maxlen=150)
+
+        # 2. Zero-Day (Isolation Forest) modelini yuklash (ixtiyoriy)
+        iso_path = os.path.join(HERE, "model_iso.joblib")
+        if os.path.exists(iso_path):
+            try:
+                b_iso = joblib.load(iso_path)
+                self.model_iso = b_iso["model"]
+                self.features_iso = b_iso["features"]
+            except Exception:
+                self.model_iso = None
+        else:
+            self.model_iso = None
+
+        self.devices, self.flows, self.events = {}, {}, collections.deque(maxlen=100)
+        self.packet_buffer = collections.deque(maxlen=200)
         self.stats = {"packets": 0, "flows": 0, "suspicious": 0}
         self.lock = threading.RLock()
         self.sniffing, self.sniff_error, self.scan_info = False, None, {"method": None, "cidr": default_cidr(), "at": None}
@@ -252,11 +299,34 @@ class Monitor:
         self.blocked = set()
         self.tg_offset = 0
         self.db_path = os.path.join(HERE, "aiot_events.db")
+
+        # SSE (Server-Sent Events) abonentlar ro'yxati
+        self._subscribers = []
+        self._sub_lock = threading.Lock()
+
         self._init_db()
+        self._setup_iptables()
+
+    def _setup_iptables(self):
+        """Xavfsiz IPS arxitekturasi: Faqat AIOT_IPS nomli maxsus zanjir yaratiladi va boshqariladi."""
+        try:
+            # 1. AIOT_IPS maxsus zanjirini yaratish (mavjud bo'lsa xato qilmaydi)
+            subprocess.run(["iptables", "-N", "AIOT_IPS"], check=False, capture_output=True)
+            # 2. INPUT zanjirining boshiga AIOT_IPS ni bog'lash (faqat 1 marta)
+            chk = subprocess.run(["iptables", "-C", "INPUT", "-j", "AIOT_IPS"], check=False, capture_output=True)
+            if chk.returncode != 0:
+                subprocess.run(["iptables", "-I", "INPUT", "1", "-j", "AIOT_IPS"], check=False, capture_output=True)
+            # 3. Faqat o'zimizning AIOT_IPS zanjirimizni tozalash (tizimdagi boshqa qoidalarga tegilmaydi!)
+            subprocess.run(["iptables", "-F", "AIOT_IPS"], check=False, capture_output=True)
+        except Exception as e:
+            print(f"[!] iptables sozlashda ogohlantirish: {e}")
 
     def _init_db(self):
+        """SQLite bazasini xavfsiz va WAL rejimida ishga tushirish (database lock xatolarini oldini oladi)."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -265,18 +335,37 @@ class Monitor:
             """)
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] DB Init xatosi: {e}")
 
     def _save_event_db(self, ev):
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
             conn.execute("INSERT INTO events (time, level, ip, label, text, action) VALUES (?, ?, ?, ?, ?, ?)",
                          (ev.get("t"), ev.get("level", 0), ev.get("ip", ""), ev.get("label", ""), ev.get("text", ""), ev.get("action", "")))
             conn.commit()
             conn.close()
         except Exception:
             pass
+
+    def subscribe(self):
+        """SSE real-time stream uchun yangi mijoz navbatini ro'yxatga olish."""
+        q = collections.deque(maxlen=30)
+        with self._sub_lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q):
+        with self._sub_lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+    def _broadcast(self, event_type, data):
+        with self._sub_lock:
+            for q in self._subscribers:
+                q.append((event_type, data))
 
     def _tg_configured(self):
         return bool(
@@ -327,7 +416,6 @@ class Monitor:
         return "\n".join(lines)
 
     def _send_telegram_attack(self, dev, lab, sc, det, target_ip=None):
-        """Hujum boshlanganda xavf darajasiga mos boyitilgan ogohlantirish kartochkasini yuborish"""
         if not self._tg_configured():
             return
         try:
@@ -339,7 +427,7 @@ class Monitor:
             bar = confidence_bar(sc)
             rec = ACTION.get(lab, "Tarmoq oqimini tekshiring va shubhali IP manzilni bloklang.")
             is_blk = (target_ip in self.blocked) if target_ip else False
-            status_str = "🛑 Bloklangan (iptables DROP)" if is_blk else "🟡 Faol (Bloklanmagan)"
+            status_str = "🛑 Bloklangan (AIOT_IPS DROP)" if is_blk else "🟡 Faol (Bloklanmagan)"
 
             msg_lines = [
                 f"🚨 <b>AIoT NIDS — XAVFSIZLIK OGOHLANTIRISHI!</b>",
@@ -367,7 +455,6 @@ class Monitor:
             print(f"[!] Telegram attack xabar xatosi: {e}")
 
     def _send_telegram_resolved(self, dev, prev_attack, target_ip=None):
-        """Hujum to'xtab, qurilma normal holatga qaytganda yuboriladigan xabar"""
         if not self._tg_configured():
             return
         try:
@@ -376,7 +463,7 @@ class Monitor:
             ip = dev["ip"]
             pps = dev.get("pkts_s", 0)
             is_blk = (target_ip in self.blocked) if target_ip else False
-            status_str = "🛑 Bloklangan (iptables DROP)" if is_blk else "🟢 Tinch / Himoyalangan"
+            status_str = "🛑 Bloklangan (AIOT_IPS DROP)" if is_blk else "🟢 Tinch / Himoyalangan"
 
             msg_lines = [
                 f"🟢 <b>AIoT NIDS — XAVF TO'XTATILDI (TINCH HOLAT)</b>",
@@ -413,7 +500,6 @@ class Monitor:
                 for upd in res.get("result", []):
                     self.tg_offset = upd["update_id"] + 1
 
-                    # 1. Inline tugma bosilganda
                     cb = upd.get("callback_query")
                     if cb:
                         data = cb.get("data", "")
@@ -445,13 +531,13 @@ class Monitor:
                                 toast_txt = f"🛑 {ip} muvaffaqiyatli bloklandi!" if ok else f"⚠️ Xato: {info}"
                                 status_footer = (
                                     f"\n📌 <b>Holati:</b> 🛑 Bloklangan (<code>{ip}</code>)\n"
-                                    f"✅ <b>IPS Qoidasi:</b> <code>iptables DROP</code> faol"
+                                    f"✅ <b>IPS Qoidasi:</b> <code>AIOT_IPS DROP</code> faol"
                                 )
                                 confirm_card = (
                                     f"🛑 <b>IPS HIMOYA — QURILMA BLOKLANDI!</b>\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"🎯 <b>Bloklangan manzil:</b> <code>{ip}</code>\n"
-                                    f"⚙️ <b>Qo'llanilgan chora:</b> <code>iptables INPUT DROP</code>\n"
+                                    f"⚙️ <b>Qo'llanilgan chora:</b> <code>AIOT_IPS DROP</code>\n"
                                     f"🕒 <b>Vaqt:</b> <code>{time.strftime('%H:%M:%S')}</code>\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"📌 <b>Holati:</b> 🛑 Bloklangan (Trafik to'xtatilgan)"
@@ -466,7 +552,7 @@ class Monitor:
                                     f"🔓 <b>IPS HIMOYA — BLOKDAN CHIQARILDI!</b>\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"🎯 <b>Qurilma manzili:</b> <code>{ip}</code>\n"
-                                    f"⚙️ <b>Holat:</b> Cheklov olindi (<code>iptables ACCEPT</code>)\n"
+                                    f"⚙️ <b>Holat:</b> Cheklov olindi (<code>AIOT_IPS</code>)\n"
                                     f"🕒 <b>Vaqt:</b> <code>{time.strftime('%H:%M:%S')}</code>\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"📌 <b>Holati:</b> 🟢 Faol (Bloklanmagan)"
@@ -499,7 +585,6 @@ class Monitor:
                                 except Exception:
                                     pass
 
-                    # 2. /start va /status buyruqlari
                     m = upd.get("message")
                     if m:
                         txt = m.get("text", "").strip()
@@ -554,6 +639,7 @@ class Monitor:
                 resolved_name = "Shu kompyuter" if is_me else (names.get(ip) or existing_name or "")
                 self._dev(ip, mac, name=resolved_name, vendor=vendor, dtype=dtype)
         self.scan_info = {"method": "+".join(dict.fromkeys(methods)), "cidr": cidr, "at": time.strftime("%H:%M:%S")}
+        self._broadcast("scan", {"found": len(found), "scan_info": self.scan_info})
         return len(found)
 
     def _ping_loop(self):
@@ -597,7 +683,6 @@ class Monitor:
             self.sniffing = True
             self.sniff_error = None
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
-
             for line in proc.stdout:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) < 10:
@@ -632,10 +717,16 @@ class Monitor:
                     try:
                         raw_bytes = bytes.fromhex(raw_hex_str)
                         ascii_str = "".join(chr(b) if 32 <= b < 127 else "." for b in raw_bytes)
+                        # mDNS nomini avtomatik tutish
                         if (sp == 5353 or dp == 5353) and src in self.devices and not self.devices[src].get("name"):
                             m_name = re.search(r"([A-Za-z0-9_-]{3,25})\.local", ascii_str)
                             if m_name:
                                 self.devices[src]["name"] = m_name.group(1)
+                        # MQTT yoki RTSP sarlavhalarini tekshirish
+                        if (sp == 1883 or dp == 1883) and "MQIsdp" in ascii_str or "MQTT" in ascii_str:
+                            proto_name = "MQTT"
+                        elif (sp == 554 or dp == 554) and "RTSP" in ascii_str:
+                            proto_name = "RTSP"
                     except Exception:
                         ascii_str = proto_name
                 else:
@@ -643,12 +734,13 @@ class Monitor:
                     ascii_str = proto_name or proto.upper()
 
                 svc = SERVICE.get(dp) or SERVICE.get(sp) or (proto_name.lower() if proto_name else "-")
-                self.packet_buffer.append(dict(
+                pkt_data = dict(
                     time=time.strftime("%H:%M:%S"),
                     src=src, dst=dst, proto=proto, sport=sp, dport=dp,
                     service=svc, len=length, flags=flags_str or "-",
                     payload=raw_hex_str, ascii=ascii_str
-                ))
+                )
+                self.packet_buffer.append(pkt_data)
 
                 if src not in self.devices and dst not in self.devices:
                     continue
@@ -708,15 +800,35 @@ class Monitor:
                 self.analyze(flows)
             except Exception:
                 pass
+            # SSE orqali yangilanishlarni yuborish
+            self._broadcast("tick", self.snapshot())
 
     def analyze(self, flows):
         acc = collections.defaultdict(lambda: dict(pk=0, by=0, fl=0, rem=set(), bad=[]))
         inb = collections.defaultdict(lambda: collections.defaultdict(lambda: dict(ports=set(), pk=0)))
         if flows:
-            P = self.model.predict_proba(pd.DataFrame([self._row(f) for f in flows], columns=self.features))
-            for f, pr in zip(flows, P):
+            df_features = pd.DataFrame([self._row(f) for f in flows], columns=self.features)
+            P = self.model.predict_proba(df_features)
+
+            # Isolation Forest (Zero-Day) tekshiruvi
+            iso_preds = None
+            if self.model_iso is not None:
+                try:
+                    iso_df = df_features[self.features_iso]
+                    iso_preds = self.model_iso.predict(iso_df)  # -1 anomaliya, 1 normal
+                except Exception:
+                    iso_preds = None
+
+            for i, (f, pr) in enumerate(zip(flows, P)):
                 label, score = self.classes[pr.argmax()], 1 - pr[self.ni]
                 bad = label != "normal" and score >= THRESH
+
+                # Agar RF normal desa-yu, Isolation Forest o'ta g'ayritabiiy deb topsa (Zero-Day)
+                if not bad and iso_preds is not None and iso_preds[i] == -1 and score >= 0.5:
+                    label = "zero_day"
+                    score = 0.85
+                    bad = True
+
                 self.stats["flows"] += 1
                 self.stats["suspicious"] += int(bad)
                 for dev, other in ((f["orig"], f["resp"]), (f["resp"], f["orig"])):
@@ -754,8 +866,9 @@ class Monitor:
                     cnt = collections.Counter(x[1] for x in a["bad"])
                     lab = cnt.most_common(1)[0][0]
                     top = max(a["bad"], key=lambda x: x[0])
+                    engine_tag = "Zero-Day IsoForest" if lab == "zero_day" else "Random Forest AI"
                     verdict = (lab, max(x[0] for x in a["bad"] if x[1] == lab),
-                               f"{len(a['bad'])} ta shubhali oqim ({top[2]}:{top[3]}) [Random Forest AI]")
+                                f"{len(a['bad'])} ta shubhali oqim ({top[2]}:{top[3]}) [{engine_tag}]")
                     if top[2] in self.devices and top[2] != self.me:
                         attacker_ip = top[2]
 
@@ -795,32 +908,30 @@ class Monitor:
         if not self._blockable(ip):
             return False, "Bu manzilni bloklab bo'lmaydi (lokal emas yoki o'z IP manzilingiz)."
         try:
-            res = subprocess.run(
-                ["iptables", "-I", "INPUT", "-s", ip, "-m", "conntrack", "--ctstate", "NEW", "-j", "DROP"],
-                check=False, capture_output=True
-            )
-            if res.returncode != 0:
-                subprocess.run(["iptables", "-I", "INPUT", "-s", ip, "-p", "tcp", "--syn", "-j", "DROP"], check=True, capture_output=True)
+            # Xavfsiz: faqat maxsus AIOT_IPS zanjiriga qoida qo'shiladi
+            subprocess.run(["iptables", "-I", "AIOT_IPS", "-s", ip, "-j", "DROP"], check=True, capture_output=True)
             self.blocked.add(ip)
             ev = dict(t=time.strftime("%H:%M:%S"), level=1, ip=ip, label="bloklandi",
-                      text=f"{ip} BLOKLANDI (iptables DROP qoidasi yoqildi).", action="IPS Himoya")
+                      text=f"{ip} BLOKLANDI (AIOT_IPS DROP qoidasi faollashtirildi).", action="IPS Himoya")
             self.events.appendleft(ev)
             self._save_event_db(ev)
-            return True, "Bloklandi (iptables DROP)"
+            self._broadcast("event", ev)
+            return True, "Bloklandi (AIOT_IPS DROP)"
         except Exception as e:
             return False, str(e)
 
     def unblock(self, ip):
         try:
-            subprocess.run(["iptables", "-D", "INPUT", "-s", ip, "-m", "conntrack", "--ctstate", "NEW", "-j", "DROP"], check=False, capture_output=True)
-            subprocess.run(["iptables", "-D", "INPUT", "-s", ip, "-p", "tcp", "--syn", "-j", "DROP"], check=False, capture_output=True)
+            # AIOT_IPS zanjiridan o'chirish
+            subprocess.run(["iptables", "-D", "AIOT_IPS", "-s", ip, "-j", "DROP"], check=False, capture_output=True)
+            # Zaxira (agar eski versiyadan qolgan bo'lsa)
             subprocess.run(["iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"], check=False, capture_output=True)
-            subprocess.run(["iptables", "-D", "FORWARD", "-s", ip, "-j", "DROP"], check=False, capture_output=True)
             self.blocked.discard(ip)
             ev = dict(t=time.strftime("%H:%M:%S"), level=0, ip=ip, label="ochildi",
                       text=f"{ip} blokdan chiqarildi.", action="")
             self.events.appendleft(ev)
             self._save_event_db(ev)
+            self._broadcast("event", ev)
             return True, "Blokdan chiqarildi"
         except Exception as e:
             return False, str(e)
@@ -838,8 +949,38 @@ class Monitor:
         with self.lock:
             self._dev(ip, name=name or ip, cpu=cpu, mem=mem, online=True, src="agent" if ip not in self.devices else self.devices[ip]["src"])
 
+    def generate_report(self):
+        """Tarmoq xavfsizligi va auditi bo'yicha to'liq hisobot tuzish"""
+        with self.lock:
+            devs = list(self.devices.values())
+            evs = list(self.events)
+            stats = dict(self.stats)
+            blocked = list(self.blocked)
+        total_devs = len(devs)
+        online_devs = sum(1 for d in devs if d.get("online"))
+        anom_devs = sum(1 for d in devs if d.get("status") != "Normal")
+        attack_counts = collections.Counter(e.get("label") for e in evs if e.get("level") == 1)
+
+        report = {
+            "title": "AIoT NIDS & IPS Xavfsizlik Hisoboti",
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "server_ip": self.me,
+            "mac": self.my_mac,
+            "interface": self.my_iface,
+            "stats": stats,
+            "total_devices": total_devs,
+            "online_devices": online_devs,
+            "anomalous_devices": anom_devs,
+            "blocked_ips": blocked,
+            "attack_summary": dict(attack_counts),
+            "devices": devs,
+            "recent_events": evs[:30]
+        }
+        return report
+
     def start(self):
-        subprocess.run(["iptables", "-F", "INPUT"], check=False, capture_output=True)
+        # AIOT_IPS zanjirini tayyorlash (INPUT qoidalari saqlanadi!)
+        self._setup_iptables()
         threading.Thread(target=self.scan, daemon=True).start()
         for fn in (self._ping_loop, self._flush_loop, self._tshark_loop, self._telegram_poll_loop):
             threading.Thread(target=fn, daemon=True).start()
@@ -852,4 +993,5 @@ class Monitor:
                         packets=list(self.packet_buffer),
                         info=dict(sniffing=self.sniffing, sniff_error=self.sniff_error, window=WINDOW, threshold=THRESH,
                                   min_flows=MIN_FLOWS, scan_ports=SCAN_PORTS, flood_pps=FLOOD_PPS, model=self.model_file,
+                                  zero_day_enabled=self.model_iso is not None,
                                   scan=self.scan_info, me=self.me, telegram=self._tg_configured()))

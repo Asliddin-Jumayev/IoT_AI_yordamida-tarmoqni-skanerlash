@@ -1,0 +1,30 @@
+# Python cache & virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Environment variables & secrets
+.env
+.env.local
+
+# Databases & local dynamic data
+backend/aiot_events.db
+*.sqlite3
+*.log
+
+# Large datasets & network captures
+backend/data/*.csv
+frontend/*.pcap
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
