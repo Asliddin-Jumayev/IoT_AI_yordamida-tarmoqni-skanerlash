@@ -473,6 +473,36 @@
       zero_day: "#c084fc"
     };
 
+    function navTo(id, el) {
+      document.querySelectorAll("#navMenu li").forEach(x => x.classList.remove("active"));
+      if (el) el.classList.add("active");
+      const target = document.getElementById(id);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+
+    function setDevMode(m, el) {
+      devMode = m;
+      document.querySelectorAll("#devFilterPills .f-pill").forEach(x => x.classList.remove("active"));
+      if (el) el.classList.add("active");
+      renderDevices();
+    }
+
+    function setDpiQuick(val, el) {
+      $("dpiFilter").value = val;
+      document.querySelectorAll("#dpiFilterPills .f-pill").forEach(x => x.classList.remove("active"));
+      if (el) el.classList.add("active");
+      renderDpi();
+    }
+
+    function hdrs() {
+      const h = { "Content-Type": "application/json" };
+      const tk = $("token").value.trim();
+      if (tk) h["X-Token"] = tk;
+      return h;
+    }
+
     function openReport() {
       const base = $("api").value.replace(/\/$/, "");
       window.open(base + "/api/report?format=html", "_blank");

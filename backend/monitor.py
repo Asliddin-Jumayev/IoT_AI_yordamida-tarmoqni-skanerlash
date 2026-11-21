@@ -47,7 +47,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # ==============================================================================
 
 WINDOW = float(os.getenv("AIOT_WINDOW", 5))          # Oqimlarni tahlil qilish oralig'i (soniya)
-THRESH = float(os.getenv("AIOT_THRESHOLD", 0.91))    # Model ishonch chegarasi
+THRESH = float(os.getenv("AIOT_THRESHOLD", 0.93))    # Model ishonch chegarasi (93% dan yuqori bo'lsa shubhali)
 MIN_FLOWS = int(os.getenv("AIOT_MIN_FLOWS", 4))      # Anomaliya uchun minimal oqimlar
 SCAN_PORTS = int(os.getenv("AIOT_SCAN_PORTS", 20))   # Port skanerlash chegarasi
 FLOOD_PPS = float(os.getenv("AIOT_FLOOD_PPS", 200))  # DoS paket tezligi chegarasi
@@ -247,21 +247,98 @@ def hostname(ip):
         pass
     return ""
 
-def arp_scan(cidr):
+def deep_network_scan(cidr, iface=None):
+    """Ko'p bosqichli tarmoq skaneri: Scapy ARP + SSDP/mDNS probelar + Kernel ARP jadvali + Ping Sweep."""
+    found = {}
+    methods = []
+    net = ipaddress.ip_network(cidr, strict=False)
+
+    # 1. Qurilmalarni uyg'otish: broadcast UDP probelar (SSDP, mDNS)
+    try:
+        s_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        s_udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s_udp.settimeout(0.3)
+        # SSDP (UPnP) probe
+        s_udp.sendto(b'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n', ('239.255.255.250', 1900))
+        # mDNS probe
+        s_udp.sendto(b'\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\t_services\x07_dns-sd\x04_udp\x05local\x00\x00\x0c\x00\x01', ('224.0.0.251', 5353))
+        s_udp.close()
+    except Exception:
+        pass
+
+    # Broadcast ping
+    try:
+        bcast = str(net.broadcast_address)
+        subprocess.run(["ping", "-b", "-c", "2", "-w", "1", bcast], capture_output=True, timeout=2)
+    except Exception:
+        pass
+
+    # 2. Scapy L2 ARP Broadcast (aniq interfeys va qayta urinishlar bilan)
     try:
         from scapy.all import ARP, Ether, srp
-        ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr), timeout=2, retry=1, verbose=0)
-        return {r.psrc: r.hwsrc.lower() for _, r in ans}, "scapy-ARP"
+        kwargs = dict(timeout=3, retry=2, verbose=0, inter=0.003)
+        if iface:
+            kwargs["iface"] = iface
+        ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr), **kwargs)
+        for _, r in ans:
+            if ipaddress.ip_address(r.psrc) in net:
+                found[r.psrc] = r.hwsrc.lower()
+        if found:
+            methods.append("scapy-ARP")
     except Exception:
-        hosts = [str(h) for h in ipaddress.ip_network(cidr, strict=False).hosts()]
-        with ThreadPoolExecutor(32) as ex:
-            list(ex.map(ping, hosts))
-        out = subprocess.run(["arp", "-a"], capture_output=True, text=True).stdout
-        found = {}
-        for m in re.finditer(r"(\d+\.\d+\.\d+\.\d+).*?((?:[0-9a-fA-F]{1,2}[:-]){5}[0-9a-fA-F]{1,2})", out):
-            if ipaddress.ip_address(m.group(1)) in ipaddress.ip_network(cidr, strict=False):
-                found[m.group(1)] = m.group(2).replace("-", ":").lower()
-        return found, "ping+arp-jadvali"
+        pass
+
+    # 3. Linux yadrosi ARP keshini tekshirish (/proc/net/arp)
+    try:
+        with open("/proc/net/arp") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 4 and parts[2] == "0x2" and parts[3] != "00:00:00:00:00:00":
+                    ip_str = parts[0]
+                    mac_str = parts[3].lower()
+                    if ipaddress.ip_address(ip_str) in net:
+                        found.setdefault(ip_str, mac_str)
+        if found and "kernel-ARP" not in methods:
+            methods.append("kernel-ARP")
+    except Exception:
+        pass
+
+    # 4. ip neigh show tekshiruvi
+    try:
+        out = subprocess.run(["ip", "neigh", "show"], capture_output=True, text=True, timeout=2).stdout
+        for line in out.splitlines():
+            m = re.search(r"(\d+\.\d+\.\d+\.\d+).*?lladdr\s+((?:[0-9a-fA-F]{1,2}[:-]){5}[0-9a-fA-F]{1,2})", line)
+            if m:
+                ip_str = m.group(1)
+                mac_str = m.group(2).replace("-", ":").lower()
+                if ipaddress.ip_address(ip_str) in net and "FAILED" not in line:
+                    found.setdefault(ip_str, mac_str)
+    except Exception:
+        pass
+
+    # 5. Topilmagan IP larni tezkor concurrent ping qilish
+    try:
+        all_hosts = [str(h) for h in net.hosts()][:254]
+        unresolved = [h for h in all_hosts if h not in found]
+        if unresolved:
+            with ThreadPoolExecutor(32) as ex:
+                list(ex.map(ping, unresolved))
+            # Pingdan keyin ARP keshini qayta o'qish
+            with open("/proc/net/arp") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 4 and parts[2] == "0x2" and parts[3] != "00:00:00:00:00:00":
+                        ip_str = parts[0]
+                        mac_str = parts[3].lower()
+                        if ipaddress.ip_address(ip_str) in net:
+                            found.setdefault(ip_str, mac_str)
+    except Exception:
+        pass
+
+    return found, "+".join(dict.fromkeys(methods)) if methods else "multi-scan"
+
+def arp_scan(cidr, iface=None):
+    return deep_network_scan(cidr, iface=iface)
 
 
 class Monitor:
@@ -296,9 +373,16 @@ class Monitor:
         self.sniffing, self.sniff_error, self.scan_info = False, None, {"method": None, "cidr": default_cidr(), "at": None}
         self.me = local_ip()
         self.my_mac, self.my_iface = local_mac_and_iface(self.me)
+        self.my_network = ipaddress.ip_network(self.me + "/24", strict=False)
         self.blocked = set()
         self.tg_offset = 0
         self.db_path = os.path.join(HERE, "aiot_events.db")
+
+    def _is_local_subnet(self, ip):
+        try:
+            return ipaddress.ip_address(ip) in self.my_network
+        except Exception:
+            return False
 
         # SSE (Server-Sent Events) abonentlar ro'yxati
         self._subscribers = []
@@ -623,7 +707,7 @@ class Monitor:
 
         found, methods = {}, []
         for c in cidr_list:
-            f, method = arp_scan(c)
+            f, method = deep_network_scan(c, iface=self.my_iface)
             found.update(f)
             methods.append(method)
         found[self.me] = self.my_mac or found.get(self.me, "")
@@ -742,6 +826,12 @@ class Monitor:
                 )
                 self.packet_buffer.append(pkt_data)
 
+                # Passiv kashfiyot (Passive Device Discovery): har qanday mahalliy IP ni darhol ro'yxatga olish
+                for ip_cand, mac_cand in [(src, eth_src), (dst, "")]:
+                    if ip_cand and self._is_local_subnet(ip_cand) and ip_cand not in self.devices:
+                        v = resolve_vendor(mac_cand) if mac_cand else ""
+                        self._dev(ip_cand, mac_cand, vendor=v, dtype=guess_device_type(v, mac_cand, ip_cand == self.me), src="passive_dpi")
+
                 if src not in self.devices and dst not in self.devices:
                     continue
 
@@ -824,9 +914,9 @@ class Monitor:
                 bad = label != "normal" and score >= THRESH
 
                 # Agar RF normal desa-yu, Isolation Forest o'ta g'ayritabiiy deb topsa (Zero-Day)
-                if not bad and iso_preds is not None and iso_preds[i] == -1 and score >= 0.5:
+                if not bad and iso_preds is not None and iso_preds[i] == -1 and score >= 0.85:
                     label = "zero_day"
-                    score = 0.85
+                    score = 0.90
                     bad = True
 
                 self.stats["flows"] += 1
