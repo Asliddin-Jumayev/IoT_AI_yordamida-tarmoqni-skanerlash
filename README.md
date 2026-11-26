@@ -23,6 +23,42 @@ Ushbu dasturiy majmua lokal va **AIoT (Artificial Intelligence of Things)** tarm
 
 ---
 
+## 📸 Tizim Interfeysi va Ishlash Jarayoni (Skrinshotlar)
+
+### 1. Boshqaruv Paneli va Tarmoq Skaneri (Tinch holat)
+Tizim ishga tushganda `tshark` real vaqtda paketlarni ushlaydi. Grafikda normal trafik yashil chiziqda tasvirlangan, pastki qismda esa tarmoqdagi barcha aktiv qurilmalar va ularning MAC/Vendor ma'lumotlari aks etgan:
+![NIDS Boshqaruv Paneli](screenshots/1_nids_normal.png)
+
+### 2. Wireshark DPI va AI Model Ko'rsatkichlari (TON_IoT)
+Har bir paketning manba/manzil IP manzillari, TCP bayroqlari, protokollari va **TON_IoT** datasetida sinovdan o'tgan AI modellarning (*Decision Tree*, *Logistic Regression*, *Random Forest — 99.01%*) aniqlik va F1-Score natijalari:
+![Wireshark DPI va AI Modellar](screenshots/2_dpi_models.png)
+
+### 3. Red Team — Hujum Simulyatori va Stress-Test Muhiti
+Kiberxavfsizlik tizimini sinash uchun ishlab chiqilgan **AIoT RED TEAM** paneli. Bu yerda hujum vektori, generator vositasi (`Scapy` yoki `hping3`), davomiylik va intensivlik sozlanadi:
+![Red Team Qo'mondonlik Paneli](screenshots/3_redteam_ready.png)
+
+### 4. Red Team — Tarmoqdagi Nishonlarni Avtomatik Aniqlash
+Red Team paneli NIDSning `5000`-porti bilan jonli sinxronlashib, tarmoqdagi barcha qurilmalarni avtomatik ro'yxatga oladi va nishonga olish imkonini beradi:
+![Red Team Nishonlar](screenshots/4_redteam_targets.png)
+
+### 5. Red Team — Faol TCP SYN Flood (DoS) Hujumi
+`hping3 --flood` rejimi orqali yuqori tezlikdagi **SYN Flood (DoS)** hujumi boshlangan holat va jonli terminal loglari:
+![Faol SYN Flood Hujumi](screenshots/5_redteam_synflood.png)
+
+### 6. NIDS Reaksiyasi — Hujumni Aniqlash va Trevoga!
+Hujum boshlanishi bilan NIDS paneli darhol qizil trevoga holatiga o'tadi va AI modeli **DoS** hujumi ekanligini aniqlaydi:
+![NIDS Hujum Aniqlanishi](screenshots/6_nids_attack_alert.png)
+
+### 7. Haqiqiy Hex/ASCII Payload va Xavfsizlik Jurnali (SQLite)
+Shifrlangan va ochiq paketlarning haqiqiy **Hex/ASCII** ichki payload ma'lumotlari hamda SQLite bazasiga yozilgan **Xavfsizlik Jurnali** tarixi:
+![Payload va Xavfsizlik Jurnali](screenshots/7_nids_logs_payload.png)
+
+### 8. "Tarmoq Ko'zi" — Interaktiv Telegram IPS Boti
+Tarmoqda xavf aniqlanganda va bartaraf etilganda administratorga real vaqtda keluvchi bildirishnomalar hamda tezkor **🔴 Bloklash** inline tugmasi:
+![Tarmoq Ko'zi Telegram Bot](screenshots/8_telegram_bot.png)
+
+---
+
 ## 🛠️ Tizim Talablari va O'rnatish
 
 Loyihani **Parrot OS**, **Kali Linux** yoki **Ubuntu/Debian** muhitida ishga tushirish:
