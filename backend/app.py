@@ -135,6 +135,19 @@ def add_device():
     return jsonify(ok=True, ip=ip)
 
 
+@app.post("/api/rename_device")
+def rename_device():
+    if denied():
+        return jsonify(error="Token noto'g'ri"), 403
+    d = request.get_json(silent=True) or {}
+    ip = str(d.get("ip", "")).strip()
+    name = str(d.get("name", "")).strip()
+    if not ip:
+        return jsonify(error="IP kiritilmadi"), 400
+    ok = mon.rename_device(ip, name)
+    return jsonify(ok=ok, ip=ip, name=name)
+
+
 @app.post("/api/ingest")
 def ingest():
     if denied():

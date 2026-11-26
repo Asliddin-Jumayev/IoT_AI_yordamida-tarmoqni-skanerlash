@@ -47,10 +47,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # ==============================================================================
 
 WINDOW = float(os.getenv("AIOT_WINDOW", 5))          # Oqimlarni tahlil qilish oralig'i (soniya)
-THRESH = float(os.getenv("AIOT_THRESHOLD", 0.93))    # Model ishonch chegarasi (93% dan yuqori bo'lsa shubhali)
-MIN_FLOWS = int(os.getenv("AIOT_MIN_FLOWS", 4))      # Anomaliya uchun minimal oqimlar
-SCAN_PORTS = int(os.getenv("AIOT_SCAN_PORTS", 20))   # Port skanerlash chegarasi
-FLOOD_PPS = float(os.getenv("AIOT_FLOOD_PPS", 200))  # DoS paket tezligi chegarasi
+THRESH = float(os.getenv("AIOT_THRESHOLD", 0.88))    # Model ishonch chegarasi (88% dan yuqori bo'lsa shubhali)
+MIN_FLOWS = int(os.getenv("AIOT_MIN_FLOWS", 3))      # Anomaliya uchun minimal oqimlar
+SCAN_PORTS = int(os.getenv("AIOT_SCAN_PORTS", 15))   # Port skanerlash chegarasi
+FLOOD_PPS = float(os.getenv("AIOT_FLOOD_PPS", 100))  # DoS paket tezligi chegarasi (100 pkt/s)
 
 # IoT va Tarmoq protokollari lug'ati (Kengaytirilgan DPI)
 SERVICE = {
@@ -378,18 +378,20 @@ class Monitor:
         self.tg_offset = 0
         self.db_path = os.path.join(HERE, "aiot_events.db")
 
-    def _is_local_subnet(self, ip):
-        try:
-            return ipaddress.ip_address(ip) in self.my_network
-        except Exception:
-            return False
-
         # SSE (Server-Sent Events) abonentlar ro'yxati
         self._subscribers = []
         self._sub_lock = threading.Lock()
 
         self._init_db()
+        self._load_events_from_db()
         self._setup_iptables()
+
+    def _is_local_subnet(self, ip):
+        try:
+            a = ipaddress.ip_address(ip)
+            return a in self.my_network and not a.is_loopback and a != self.my_network.broadcast_address
+        except Exception:
+            return False
 
     def _setup_iptables(self):
         """Xavfsiz IPS arxitekturasi: Faqat AIOT_IPS nomli maxsus zanjir yaratiladi va boshqariladi."""
@@ -417,10 +419,49 @@ class Monitor:
                     time TEXT, level INTEGER, ip TEXT, label TEXT, text TEXT, action TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS device_names (
+                    ip TEXT PRIMARY KEY,
+                    name TEXT
+                )
+            """)
             conn.commit()
             conn.close()
         except Exception as e:
             print(f"[!] DB Init xatosi: {e}")
+
+    def _load_events_from_db(self):
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=5.0)
+            rows = conn.execute("SELECT time, level, ip, label, text, action FROM events ORDER BY id DESC LIMIT 50").fetchall()
+            for r in reversed(rows):
+                self.events.appendleft(dict(t=r[0], level=r[1], ip=r[2], label=r[3], text=r[4], action=r[5]))
+            conn.close()
+        except Exception:
+            pass
+
+    def rename_device(self, ip, name):
+        name = str(name).strip()
+        with self.lock:
+            if ip in self.devices:
+                self.devices[ip]["name"] = name
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=5.0)
+            conn.execute("INSERT OR REPLACE INTO device_names (ip, name) VALUES (?, ?)", (ip, name))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception:
+            return False
+
+    def _get_saved_name(self, ip):
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=3.0)
+            row = conn.execute("SELECT name FROM device_names WHERE ip = ?", (ip,)).fetchone()
+            conn.close()
+            return row[0] if row else ""
+        except Exception:
+            return ""
 
     def _save_event_db(self, ev):
         try:
@@ -684,12 +725,18 @@ class Monitor:
                 time.sleep(3)
 
     def _dev(self, ip, mac="", **kw):
-        d = self.devices.setdefault(ip, dict(ip=ip, mac=mac, name="", vendor="", dtype="", online=None, rtt=None, pkts_s=0, bytes_s=0,
+        if not ip or ip.endswith(".255") or ip == "255.255.255.255":
+            return {}
+        saved_name = self._get_saved_name(ip)
+        d = self.devices.setdefault(ip, dict(ip=ip, mac=mac, name=saved_name, vendor="", dtype="", online=True, rtt=None, pkts_s=0, bytes_s=0,
                                              flows=0, remotes=0, avg_size=0, cpu=None, mem=None, status="Normal", score=0.0,
-                                             src="scan", last_attack="", action="", seen=time.time()))
+                                             src="scan", last_attack="", action="", seen=time.time(), alert_until=0.0))
         if mac:
             d["mac"] = mac
+        if saved_name:
+            d["name"] = saved_name
         d.update(kw)
+        d["seen"] = time.time()
         return d
 
     def scan(self, cidr=None):
@@ -728,16 +775,28 @@ class Monitor:
 
     def _ping_loop(self):
         while True:
-            ips = list(self.devices)
+            arp_active = set()
+            try:
+                with open("/proc/net/arp") as f:
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) >= 4 and parts[2] == "0x2" and parts[3] != "00:00:00:00:00:00":
+                            arp_active.add(parts[0])
+            except Exception:
+                pass
+
+            now = time.time()
+            ips = [ip for ip in list(self.devices) if not ip.endswith(".255") and ip != "255.255.255.255"]
             cpu_me, mem_me = local_cpu_mem()
             with ThreadPoolExecutor(16) as ex:
                 for ip, rtt in zip(ips, ex.map(ping, ips)):
                     with self.lock:
                         if ip in self.devices:
-                            if self.devices[ip]["src"] == "scan":
-                                self.devices[ip].update(rtt=rtt, online=rtt is not None)
+                            d = self.devices[ip]
+                            is_online = (rtt is not None) or (d.get("pkts_s", 0) > 0) or (ip in arp_active) or (ip == self.me) or ((now - d.get("seen", 0)) < 180)
+                            d.update(rtt=rtt, online=is_online)
                             if ip == self.me and cpu_me is not None:
-                                self.devices[ip].update(cpu=cpu_me, mem=mem_me, online=True)
+                                d.update(cpu=cpu_me, mem=mem_me, online=True)
             time.sleep(WINDOW)
 
     def _tshark_loop(self):
@@ -828,9 +887,15 @@ class Monitor:
 
                 # Passiv kashfiyot (Passive Device Discovery): har qanday mahalliy IP ni darhol ro'yxatga olish
                 for ip_cand, mac_cand in [(src, eth_src), (dst, "")]:
-                    if ip_cand and self._is_local_subnet(ip_cand) and ip_cand not in self.devices:
-                        v = resolve_vendor(mac_cand) if mac_cand else ""
-                        self._dev(ip_cand, mac_cand, vendor=v, dtype=guess_device_type(v, mac_cand, ip_cand == self.me), src="passive_dpi")
+                    if ip_cand and self._is_local_subnet(ip_cand) and not ip_cand.endswith(".255"):
+                        if ip_cand not in self.devices:
+                            v = resolve_vendor(mac_cand) if mac_cand else ""
+                            self._dev(ip_cand, mac_cand, vendor=v, dtype=guess_device_type(v, mac_cand, ip_cand == self.me), src="passive_dpi")
+                        else:
+                            self.devices[ip_cand]["seen"] = time.time()
+                            if mac_cand and not self.devices[ip_cand].get("mac"):
+                                v = resolve_vendor(mac_cand)
+                                self.devices[ip_cand].update(mac=mac_cand, vendor=v, dtype=guess_device_type(v, mac_cand, ip_cand == self.me))
 
                 if src not in self.devices and dst not in self.devices:
                     continue
@@ -969,7 +1034,11 @@ class Monitor:
                     if cpu_load is not None and cpu_load > 85.0:
                         sc = min(1.0, sc + 0.15)
                         det += f" [⚠️ Yuqori CPU: {cpu_load}%]"
-                    d.update(status=lab, score=round(float(sc), 3), action=ACTION.get(lab, ""), last_attack=lab, last_target_ip=target_for_btn)
+                    d["alert_until"] = time.time() + 30.0
+                    d["last_attack"] = lab
+                    d["last_target_ip"] = target_for_btn
+                    d.update(status=lab, score=round(float(sc), 3), action=ACTION.get(lab, ""))
+                    self.stats["suspicious"] += 1
                     if prev != lab:
                         ev = dict(t=t, level=1, action=ACTION.get(lab, ""), ip=ip, label=lab,
                                   text=f"{d['name'] or ip} ({ip}): {lab} gumon, ishonch {sc*100:.0f}%, {det}")
@@ -977,13 +1046,17 @@ class Monitor:
                         self._save_event_db(ev)
                         self._send_telegram_attack(d, lab, sc, det, target_ip=target_for_btn)
                 else:
-                    d.update(status="Normal", score=0.0, action="")
-                    if prev != "Normal":
-                        ev = dict(t=t, level=0, ip=ip, label="normal",
-                                  text=f"{d['name'] or ip} ({ip}): normal holatga qaytdi.", action="")
-                        self.events.appendleft(ev)
-                        self._save_event_db(ev)
-                        self._send_telegram_resolved(d, prev, target_ip=d.get("last_target_ip"))
+                    if time.time() < d.get("alert_until", 0.0):
+                        # Alert cooldown: Foydalanuvchi interfeysda ko'rishi uchun 30s davomida ogohlantirish saqlanadi
+                        d.update(status=d.get("last_attack", "Anomaliya"), score=d.get("score", 0.95))
+                    else:
+                        d.update(status="Normal", score=0.0, action="")
+                        if prev != "Normal":
+                            ev = dict(t=t, level=0, ip=ip, label="normal",
+                                      text=f"{d['name'] or ip} ({ip}): normal holatga qaytdi.", action="")
+                            self.events.appendleft(ev)
+                            self._save_event_db(ev)
+                            self._send_telegram_resolved(d, prev, target_ip=d.get("last_target_ip"))
 
     def _blockable(self, ip):
         try:

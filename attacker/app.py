@@ -6,7 +6,7 @@ intensivlik cheklangan. Boshqa (ommaviy internet) IP ga yuborishga ruxsat YO'Q.
 
 Ishga tushirish:  sudo venv/bin/python app.py   (port 5001)
 """
-import os, time, random, shlex, shutil, subprocess, threading, ipaddress, itertools
+import os, time, random, shlex, shutil, subprocess, threading, ipaddress, itertools, re
 from flask import Flask, jsonify, request
 
 MAX_DURATION = 6000        # soniya, bitta hujum uchun qattiq chegara
@@ -108,10 +108,26 @@ def run_attack_hping3(target, kind, duration, count=0):
         with lock:
             STATE.update(running=False, stop=False)
         return
-    # 'timeout' - backstop: count bilan ishlasa ham, biror sabab bilan to'xtamay qolsa, baribir majburan o'chiradi
     cmd = ["timeout", str(duration)] + HPING3_CMD[kind](target, count)
     log(f"Boshlandi [hping3]: {' '.join(shlex.quote(c) for c in cmd)}"
         + (f" (maqsad: {min(count, MAX_COUNT)} ta paket)" if count else " (vaqt bilan cheklangan, --flood)"))
+    t0 = time.time()
+    tracker_stop = threading.Event()
+
+    def _track_live():
+        while not tracker_stop.is_set():
+            elapsed = time.time() - t0
+            # --flood rejimida hping3 taxminan 7500-8000 pkt/s tezlikda yuboradi
+            est_sent = int(elapsed * 7800) if not count else min(int(elapsed * 1000), count)
+            with lock:
+                if STATE["running"]:
+                    STATE["sent"] = est_sent
+            time.sleep(0.5)
+
+    tracker_thread = threading.Thread(target=_track_live, daemon=True)
+    tracker_thread.start()
+
+    total_sent = 0
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         with lock:
@@ -120,15 +136,25 @@ def run_attack_hping3(target, kind, duration, count=0):
             line = line.strip()
             if line:
                 log(line)
+                m = re.search(r"(\d+)\s+packets\s+transmitted", line)
+                if m:
+                    total_sent = int(m.group(1))
             with lock:
                 if STATE["stop"] and proc.poll() is None:
                     proc.terminate()
         proc.wait()
-        log(f"Tugadi [hping3]: jarayon kodi {proc.returncode} ({target})")
+        tracker_stop.set()
+        if total_sent > 0:
+            with lock:
+                STATE["sent"] = total_sent
+        log(f"Tugadi [hping3]: jarayon kodi {proc.returncode} ({target}) | Jami: {STATE['sent']} ta paket")
     except Exception as e:
+        tracker_stop.set()
         log(f"hping3 xatosi: {e}")
-    with lock:
-        STATE.update(running=False, stop=False, proc=None)
+    finally:
+        tracker_stop.set()
+        with lock:
+            STATE.update(running=False, stop=False, proc=None)
 
 
 @app.get("/api/status")

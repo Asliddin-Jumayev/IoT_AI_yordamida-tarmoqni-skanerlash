@@ -634,8 +634,11 @@
         const isMe = x.name === "Shu kompyuter";
         return `<tr class="${isNorm ? '' : 'row-attack'}">
           <td>
-            <b style="color:#fff">${x.name || "Tarmoq qurilmasi"}</b>${isMe ? ' <span class="pill cy">HOST</span>' : ''}<br>
-            <span style="color:var(--cy)">${x.ip}</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <b style="color:#fff">${x.name || "Tarmoq qurilmasi"}</b>
+              ${isMe ? '<span class="pill cy">HOST</span>' : `<button class="b ghost" style="padding:1px 6px;font-size:11px;min-height:auto;cursor:pointer;" onclick="promptRename('${x.ip}', '${(x.name || '').replace(/'/g, "\\'")}')" title="Nomini o'zgartirish">✏️</button>`}
+            </div>
+            <span style="color:var(--cy);font-size:12px;">${x.ip}</span>
           </td>
           <td><b>${x.dtype || "—"}</b></td>
           <td>
@@ -804,6 +807,27 @@
         $("manualIpInput").value = "";
         fetchData();
       } catch (e) { alert("Xato: " + e.message); }
+    }
+
+    async function promptRename(ip, curName) {
+      const newName = prompt(`"${ip}" qurilmasi uchun yangi nom kiriting (masalan: Mening telefonim):`, curName || "");
+      if (newName === null) return;
+      const base = $("api").value.replace(/\/$/, "");
+      try {
+        const r = await fetch(base + "/api/rename_device", {
+          method: "POST",
+          headers: hdrs(),
+          body: JSON.stringify({ ip, name: newName.trim() })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          const target = lastDevices.find(x => x.ip === ip);
+          if (target) target.name = newName.trim();
+          renderDevices();
+        }
+      } catch (e) {
+        alert("Nomni saqlashda xato yuz berdi: " + e.message);
+      }
     }
 
     async function blockIp(ip) {
